@@ -1,0 +1,5 @@
+====================
+senaite.locationsync
+====================
+
+User documentation
