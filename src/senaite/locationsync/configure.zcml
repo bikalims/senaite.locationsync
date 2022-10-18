@@ -19,7 +19,7 @@
 
   <genericsetup:registerProfile
       name="default"
-      title="senaite.locationsync"
+      title="Senaite LocationSync"
       directory="profiles/default"
       description="Installs the senaite.locationsync add-on."
       provides="Products.GenericSetup.interfaces.EXTENSION"
@@ -28,7 +28,7 @@
 
   <genericsetup:registerProfile
       name="uninstall"
-      title="senaite.locationsync (uninstall)"
+      title="Senaite LocationSync (uninstall)"
       directory="profiles/uninstall"
       description="Uninstalls the senaite.locationsync add-on."
       provides="Products.GenericSetup.interfaces.EXTENSION"

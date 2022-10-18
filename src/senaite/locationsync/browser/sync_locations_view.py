@@ -5,6 +5,7 @@ from DateTime import DateTime
 import logging
 import os
 from plone.protect.interfaces import IDisableCSRFProtection
+from senaite import api
 from senaite.core import logger
 from zope.interface import alsoProvides
 from Products.Five.browser import BrowserView
@@ -20,6 +21,10 @@ ACCOUNT_FILE_NAME = "Account lims.csv"
 LOCATION_FILE_NAME = "location lims.csv"
 SYSTEM_FILE_NAME = "system lims.csv"
 CONTACT_FILE_NAME = "attention contact lims.csv"
+
+EMAIL_ADDRESS = "mike@webtide.co.za"
+
+ACCOUNT_FILE_HEADERS = ["Customer_Number", "Account_name", "Inactive", "On_HOLD"]
 
 
 class ISyncLocationsView(Interface):
@@ -85,14 +90,14 @@ class SyncLocationsView(BrowserView):
         self.log("Folder check was successful")
 
         self.log("Sync process starting")
-        self.process_file("Accounts", ACCOUNT_FILE_NAME)
+        self.process_file("Accounts", ACCOUNT_FILE_NAME, ACCOUNT_FILE_HEADERS)
         self.process_file("Locations", LOCATION_FILE_NAME)
         self.process_file("Systems", SYSTEM_FILE_NAME)
         self.process_file("Contacts", CONTACT_FILE_NAME)
         self.log("Sync process complete")
 
-    def process_file(self, file_type, file_name):
-        data = self.read_file_data(file_type, file_name)
+    def process_file(self, file_type, file_name, headers=[]):
+        data = self.read_file_data(file_type, file_name, headers=headers)
         self.log(
             "Found {} rows in {} with {} errros".format(
                 len(data["rows"]),
@@ -104,7 +109,8 @@ class SyncLocationsView(BrowserView):
             return
 
         if data.get("errors", []):
-            self.move_file(file_name, SYNC_ERROR_FOLDER)
+            self._move_file(file_name, SYNC_ERROR_FOLDER)
+            return
 
         # TODO Process Rules
         success = False
@@ -119,26 +125,56 @@ class SyncLocationsView(BrowserView):
 
         # Move data file
         if success:
-            self.move_file(file_name, SYNC_ARCHIVE_FOLDER)
+            self._move_file(file_name, SYNC_ARCHIVE_FOLDER)
         else:
-            self.move_file(file_name, SYNC_ERROR_FOLDER)
+            self._move_file(file_name, SYNC_ERROR_FOLDER)
 
-    def read_file_data(self, file_type, file_name):
+    def clean_row(self, row):
+        illegal_chars = ["\xef\xbb\xbf"]
+        cleaned = []
+        for cell in row:
+            cell = cell.strip()
+            for char in illegal_chars:
+                if char in cell:
+                    cell = cell.replace(char, "")
+            cleaned.append(cell)
+        return cleaned
+
+    def read_file_data(self, file_type, file_name, headers):
         self.log("Read {} data file starting".format(file_type))
         file_path = "{}/{}".format(SYNC_CURRENT_FOLDER, file_name)
         if not os.path.exists(file_path):
             self.log("{} file not found".format(file_type))
             return {"headers": [], "rows": [], "errors": ["FileNotFound"]}
 
-        headers = []
         rows = []
         errors = []
         with open(file_path) as csvfile:
             reader = csv.reader(csvfile, delimiter=",", quotechar='"')
             for i, row in enumerate(reader):
+                if len(row) == 0:
+                    continue
+                row = self.clean_row(row)
                 if i == 0:
-                    headers = row
-                    self.log("File {} with {} headers".format(file_name, len(row)))
+                    if len(headers) != len(row):
+                        msg = "File {} has incorrect number of headers: found {}, supposed to be {}".format(
+                            file_name, len(row), len(headers)
+                        )
+                        self.log(msg, level="error")
+                        errors.append(msg)
+                        break
+                    if headers != row:
+                        msg = "File {} has incorrect headers: found [{}], supposed to be [{}]".format(
+                            file_name, ", ".join(row), ", ".join(headers)
+                        )
+                        self.log(msg, level="error")
+                        errors.append(msg)
+                        break
+                    self.log(
+                        "File {} with corrent {} header columns".format(
+                            file_name, len(row)
+                        )
+                    )
                     continue
                 if len(headers) != len(row):
                     msg = "File {} incorrect number of columns {} in row {}: {}".format(
@@ -147,17 +183,65 @@ class SyncLocationsView(BrowserView):
                     errors.append(msg)
                     self.log(msg, level="error")
                     continue
-                rows.append(row)
+                adict = {}
+                for idx, cell in enumerate(row):
+                    adict[headers[idx]] = row[idx]
+                rows.append(adict)
                 # self.log("File {} row {}: {}".format(file_name, i, ", ".join(row)))
         self.log("Read {} data file complete".format(file_type))
         return {"headers": headers, "rows": rows, "errors": errors}
 
-    def move_file(self, file_name, dest_folder):
+    def _move_file(self, file_name, dest_folder):
         from_file_path = "{}/{}".format(SYNC_CURRENT_FOLDER, file_name)
         to_file_path = "{}/{}".format(dest_folder, file_name)
         os.rename(from_file_path, to_file_path)
 
     def process_account_rules(self, data):
+        portal = api.get_portal()
+        clients = api.search({"portal_type": "Client"})
+        client_ids = [c["getClientID"] for c in clients]
+        for row in data["rows"]:
+            if row["Customer_Number"] in client_ids:
+                # Client Already Exists
+                client = [
+                    api.get_object(c)
+                    for c in clients
+                    if row["Customer_Number"] == c["getClientID"]
+                ][0]
+                self.log("Found Client {}".format(row["Account_name"]))
+                current_state = api.get_workflow_status_of(client)
+                if row["Inactive"] == "1" or row["On_HOLD"] == "1":
+                    if current_state == "inactive":
+                        self.log(
+                            "Client {} already inactive".format(row["Account_name"])
+                        )
+                        continue
+                    else:
+                        api.do_transition_for(client, "deactivate")
+                        self.log("Deactivate Client {}".format(row["Account_name"]))
+                else:
+                    if current_state == "active":
+                        self.log("Client {} already active".format(row["Account_name"]))
+                        continue
+                    else:
+                        api.do_transition_for(client, "activate")
+                        self.log("Activate Client {}".format(row["Account_name"]))
+
+            else:
+                if row["Inactive"] == "1" or row["On_HOLD"] == "1":
+                    self.log(
+                        "Client {} doesn't exists but is marked as inactive/on_hold".format(
+                            row["Account_name"]
+                        )
+                    )
+                    continue
+                client = api.create(
+                    portal.clients,
+                    "Client",
+                    ClientID=row["Customer_Number"],
+                    title=row["Account_name"],
+                )
+                self.log("Create Client {}".format(row["Account_name"]))
         return True
 
     def process_locations_rules(self, data):

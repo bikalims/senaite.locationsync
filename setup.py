@@ -13,7 +13,7 @@ long_description = "\n\n".join(
 
 
 setup(
-    name="senaite.locationsync",
+    name="Senaite LocationSync",
     version="1.0a1",
     description="Update samplepoint locations from files exported from client's database",
     long_description=long_description,
