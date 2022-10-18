@@ -25,6 +25,30 @@ CONTACT_FILE_NAME = "attention contact lims.csv"
 EMAIL_ADDRESS = "mike@webtide.co.za"
 
 ACCOUNT_FILE_HEADERS = ["Customer_Number", "Account_name", "Inactive", "On_HOLD"]
+LOCATION_FILE_HEADERS = [
+    "Customer_Number",
+    "location_name",
+    "Locations_id",
+    "account_manager1",
+    "street",
+    "city",
+    "state",
+    "postcode",
+    "branch",
+    "Contract_Number",
+    "HOLD",
+    "Cancel_Box",
+]
+SYSTEM_FILE_HEADERS = [
+    "Location_id",
+    "Equipment_ID",
+    "SystemID",
+    "Equipment_Description2",
+    "system_name",
+    "Inactive_Retired_Flag",
+    "system",
+]
+CONTACT_FILE_HEADERS = ["contactID", "Locations_id", "WS_Contact_Name", "email"]
 
 
 class ISyncLocationsView(Interface):
@@ -53,29 +77,40 @@ class SyncLocationsView(BrowserView):
     def _all_folder_exist(self):
         success = True
         if not os.path.exists(SYNC_BASE_FOLDER):
-            self.log("Sync Base Folder {} does not exist".format(SYNC_BASE_FOLDER))
+            self.log(
+                "Sync Base Folder {} does not exist".format(SYNC_BASE_FOLDER),
+                level="error",
+            )
             success = False
         if not os.path.exists(SYNC_CURRENT_FOLDER):
             self.log(
-                "Sync Current Folder {} does not exist".format(SYNC_CURRENT_FOLDER)
+                "Sync Current Folder {} does not exist".format(SYNC_CURRENT_FOLDER),
+                level="error",
             )
             success = False
         if not os.path.exists(SYNC_ARCHIVE_FOLDER):
             self.log(
-                "Sync Archive Folder {} does not exist".format(SYNC_ARCHIVE_FOLDER)
+                "Sync Archive Folder {} does not exist".format(SYNC_ARCHIVE_FOLDER),
+                level="error",
             )
             success = False
         if not os.path.exists(SYNC_ERROR_FOLDER):
-            self.log("Sync Error Folder {} does not exist".format(SYNC_ERROR_FOLDER))
+            self.log(
+                "Sync Error Folder {} does not exist".format(SYNC_ERROR_FOLDER),
+                level="error",
+            )
             success = False
         return success
 
-    def log(self, message, level="info"):
+    def log(self, message, level="info", action=False):
         """Log to logging facility
 
         :param message: Log message
         :param level: Log level, e.g. debug, info, warning, error
         """
+        if action:
+            message = "Action: {}".format(message)
+
         # log into default facility
         log_level = logging.getLevelName(level.upper())
         logger.log(level=log_level, msg=message)
@@ -91,9 +126,9 @@ class SyncLocationsView(BrowserView):
 
         self.log("Sync process starting")
         self.process_file("Accounts", ACCOUNT_FILE_NAME, ACCOUNT_FILE_HEADERS)
-        self.process_file("Locations", LOCATION_FILE_NAME)
-        self.process_file("Systems", SYSTEM_FILE_NAME)
-        self.process_file("Contacts", CONTACT_FILE_NAME)
+        self.process_file("Locations", LOCATION_FILE_NAME, LOCATION_FILE_HEADERS)
+        self.process_file("Systems", SYSTEM_FILE_NAME, SYSTEM_FILE_HEADERS)
+        self.process_file("Contacts", CONTACT_FILE_NAME, CONTACT_FILE_HEADERS)
         self.log("Sync process complete")
 
     def process_file(self, file_type, file_name, headers=[]):
@@ -144,7 +179,7 @@ class SyncLocationsView(BrowserView):
         self.log("Read {} data file starting".format(file_type))
         file_path = "{}/{}".format(SYNC_CURRENT_FOLDER, file_name)
         if not os.path.exists(file_path):
-            self.log("{} file not found".format(file_type))
+            self.log("{} file not found".format(file_type), level="error")
             return {"headers": [], "rows": [], "errors": ["FileNotFound"]}
 
         rows = []
@@ -157,14 +192,14 @@ class SyncLocationsView(BrowserView):
                 row = self.clean_row(row)
                 if i == 0:
                     if len(headers) != len(row):
-                        msg = "File {} has incorrect number of headers: found {}, supposed to be {}".format(
+                        msg = "File {} has incorrect number of headers: found {}, it must be {}".format(
                             file_name, len(row), len(headers)
                         )
                         self.log(msg, level="error")
                         errors.append(msg)
                         break
                     if headers != row:
-                        msg = "File {} has incorrect headers: found [{}], supposed to be [{}]".format(
+                        msg = "File {} has incorrect headers: found [{}], it must be [{}]".format(
                             file_name, ", ".join(row), ", ".join(headers)
                         )
                         self.log(msg, level="error")
@@ -183,6 +218,7 @@ class SyncLocationsView(BrowserView):
                     errors.append(msg)
                     self.log(msg, level="error")
                     continue
+                # Process cells in row
                 adict = {}
                 for idx, cell in enumerate(row):
                     adict[headers[idx]] = row[idx]
@@ -204,9 +240,7 @@ class SyncLocationsView(BrowserView):
             if row["Customer_Number"] in client_ids:
                 # Client Already Exists
                 client = [
-                    api.get_object(c)
-                    for c in clients
-                    if row["Customer_Number"] == c["getClientID"]
+                    c for c in clients if row["Customer_Number"] == c["getClientID"]
                 ][0]
                 self.log("Found Client {}".format(row["Account_name"]))
                 current_state = api.get_workflow_status_of(client)
@@ -218,14 +252,29 @@ class SyncLocationsView(BrowserView):
                         continue
                     else:
                         api.do_transition_for(client, "deactivate")
-                        self.log("Deactivate Client {}".format(row["Account_name"]))
+                        self.log(
+                            "Deactivate Client {}".format(row["Account_name"]),
+                            action=True,
+                        )
                 else:
-                    if current_state == "active":
-                        self.log("Client {} already active".format(row["Account_name"]))
-                        continue
-                    else:
+                    # Marked in file as active
+                    if current_state == "inactive":
                         api.do_transition_for(client, "activate")
-                        self.log("Activate Client {}".format(row["Account_name"]))
+                        self.log(
+                            "Activate Client {}".format(row["Account_name"]),
+                            action=True,
+                        )
+                    if client.Title != row["Account_name"]:
+                        client = api.get_object(client)
+                        self.log(
+                            "Rename Client '{}' title to {}".format(
+                                client.Title(), row["Account_name"]
+                            ),
+                            action=True,
+                        )
+                        client.setTitle(row["Account_name"])
+                        client.reindexObject()
+                        continue
 
             else:
                 if row["Inactive"] == "1" or row["On_HOLD"] == "1":
@@ -241,10 +290,14 @@ class SyncLocationsView(BrowserView):
                     ClientID=row["Customer_Number"],
                     title=row["Account_name"],
                 )
-                self.log("Create Client {}".format(row["Account_name"]))
+                self.log("Create Client {}".format(row["Account_name"]), action=True)
         return True
 
     def process_locations_rules(self, data):
+        # portal = api.get_portal()
+        # locations = api.search({"portal_type": "Client"})
+        for row in data["rows"]:
+            pass
         return True
 
     def process_systems_rules(self, data):
