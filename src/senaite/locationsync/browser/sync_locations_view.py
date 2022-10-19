@@ -290,11 +290,10 @@ class SyncLocationsView(BrowserView):
                     ClientID=row["Customer_Number"],
                     title=row["Account_name"],
                 )
-                self.log("Create Client {}".format(row["Account_name"]), action=True)
+                self.log("Created Client {}".format(row["Account_name"]), action=True)
         return True
 
     def process_locations_rules(self, data):
-        # portal = api.get_portal()
         clients = api.search({"portal_type": "Client"})
         client_ids = [c["getClientID"] for c in clients]
         for i, row in enumerate(data["rows"]):
@@ -315,8 +314,8 @@ class SyncLocationsView(BrowserView):
                 }
             )
             # TODO add location ID to catalog and use it here
-            locations = [api.get_object(c) for c in locations]
-            location_ids = [c.system_location_id for c in locations]
+            locations = [api.get_object(l) for l in locations]
+            location_ids = [l.system_location_id for l in locations]
             if row["Locations_id"] in location_ids:
                 self.log("Found location {}".format(row["Locations_id"]))
             else:
@@ -335,12 +334,156 @@ class SyncLocationsView(BrowserView):
                     title=row["location_name"],
                 )
                 location.set_system_location_id(row["Locations_id"])
-                self.log("Create location {}".format(location.Title()), action=True)
+                self.log("Created location {}".format(location.Title()), action=True)
 
         return True
 
     def process_systems_rules(self, data):
+        locations = api.search({"portal_type": "SamplePointLocation"})
+        locations = [api.get_object(l) for l in locations]
+        location_ids = [l.get_system_location_id() for l in locations]
+        for i, row in enumerate(data["rows"]):
+            if len(row.get("SystemID", "")) == 0:
+                self.log(
+                    "System on row {} with name {} in location {} has no SystemID field".format(
+                        i,
+                        row.get("system_name", "missing"),
+                        row.get("Location_id", "missing"),
+                    ),
+                    level="error",
+                )
+                continue
+            if row["Location_id"] not in location_ids:
+                msg = "Location {} on row {} in systems file not found in DB".format(
+                    row["Location_id"], i
+                )
+                self.log(msg, level="error")
+                continue
+            location = [
+                l for l in locations if row["Location_id"] == l.get_system_location_id()
+            ][0]
+            self.log("Found Location {}".format(row["Location_id"]))
+            # TODO is location id in catalog?
+            systems = api.search(
+                {
+                    "portal_type": "SamplePoint",
+                    "query": {"path": "/".join(location.getPhysicalPath())},
+                }
+            )
+            systems = [api.get_object(s) for s in systems]
+            system_ids = []  # TODO [s.SystemId for s in systems]
+            if row["SystemID"] in system_ids:
+                self.log("Found System {}".format(row["SystemID"]))
+            else:
+                # Create new system
+                if row["Inactive_Retired_Flag"] == "1":
+                    self.log(
+                        "System {} in location {} doesn't exists but is marked as Inactive_Retired_Flag".format(
+                            row["system_name"], location.Title
+                        )
+                    )
+                    continue
+                location = api.get_object(location)
+                system = api.create(
+                    location,
+                    "SamplePoint",
+                    title=row["system_name"],
+                )
+                system.SystemId = row["SystemID"]
+                client_title = location.aq_parent.Title()
+                self.log(
+                    "Created system {} in location {} in client {}".format(
+                        system.Title(), location.Title(), client_title
+                    ),
+                    action=True,
+                )
+
         return True
 
     def process_contacts_rules(self, data):
+        portal = api.get_portal()
+        lab_contacts_folder = portal.bika_setup.bika_labcontacts
+        initial_lab_contacts = lab_contacts_folder.values()
+        lab_contact_ids = []
+        lab_contacts = []
+        for contact in initial_lab_contacts:
+            if not hasattr(contact, "ContactId"):
+                continue
+            lab_contacts.append(contact)
+            lab_contact_ids.append(contact.ContactId)
+        locations = api.search({"portal_type": "SamplePointLocation"})
+        locations = [api.get_object(l) for l in locations]
+        location_ids = [l.get_system_location_id() for l in locations]
+        for i, row in enumerate(data["rows"]):
+            if len(row.get("contactID", "")) == 0:
+                self.log(
+                    "Contact on row {} in location {} has no contactID field".format(
+                        i, row.get("Locations_id", "missing")
+                    ),
+                    level="error",
+                )
+                continue
+            if len(row.get("Locations_id", "")) == 0:
+                self.log(
+                    "Contact on row {} with contactID {} has no Locations_id field".format(
+                        i, row.get("contactID", "missing")
+                    ),
+                    level="error",
+                )
+                continue
+            if row["Locations_id"] not in location_ids:
+                msg = "Location {} on row {} in contacts file not found in DB".format(
+                    row["Locations_id"], i
+                )
+                self.log(msg, level="error")
+                continue
+            self.log("Found Location {}".format(row["Locations_id"]))
+            location = [
+                l
+                for l in locations
+                if row["Locations_id"] == l.get_system_location_id()
+            ][0]
+            location = api.get_object(location)
+            contacts = location.get_account_managers()
+            contact_ids = [c.ContactId for c in contacts]
+            client_title = location.aq_parent.Title()
+            if row["contactID"] in contact_ids:
+                self.log(
+                    "Found contact {} in location {}".format(
+                        row["contactID"], location.Title()
+                    )
+                )
+                # TODO more processing here
+                continue
+            if row["contactID"] in lab_contact_ids:
+                contact = [c for c in lab_contacts if row["contactID"] == c.ContactId][
+                    0
+                ]
+                self.log("Found lab contact {}".format(row["contactID"]))
+            else:
+                contact = api.create(
+                    lab_contacts_folder,
+                    "LabContact",
+                    Surname=row.get("WS_Contact_Name", "Missing"),
+                )
+                # contact.ContactId(row["contactID"])
+                contact.ContactId = row["contactID"]
+                lab_contacts.append(contact)
+                lab_contact_ids.append(contact.ContactId)
+                self.log(
+                    "Created contact {} for location {} in client {}".format(
+                        contact.ContactId, location.Title(), client_title
+                    ),
+                    action=True,
+                )
+            contacts.append(contact)
+            location.set_account_managers(contacts)
+            # TODO Ensure email is correct
+            contact.setEmailAddress(row["email"])
+            self.log(
+                "Added contact {} to location {} in client {}".format(
+                    contact.Title(), location.Title(), client_title
+                ),
+                action=True,
+            )
         return True
