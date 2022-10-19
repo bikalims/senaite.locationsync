@@ -295,9 +295,48 @@ class SyncLocationsView(BrowserView):
 
     def process_locations_rules(self, data):
         # portal = api.get_portal()
-        # locations = api.search({"portal_type": "Client"})
-        for row in data["rows"]:
-            pass
+        clients = api.search({"portal_type": "Client"})
+        client_ids = [c["getClientID"] for c in clients]
+        for i, row in enumerate(data["rows"]):
+            if row["Customer_Number"] not in client_ids:
+                msg = "Client {} on row {} in locations file not found in DB".format(
+                    row["Customer_Number"], i
+                )
+                self.log(msg, level="error")
+                continue
+            client = [c for c in clients if row["Customer_Number"] == c["getClientID"]][
+                0
+            ]
+            self.log("Found Client {}".format(row["Customer_Number"]))
+            locations = api.search(
+                {
+                    "portal_type": "SamplePointLocation",
+                    "query": {"path": client.getPath()},
+                }
+            )
+            # TODO add location ID to catalog and use it here
+            locations = [api.get_object(c) for c in locations]
+            location_ids = [c.system_location_id for c in locations]
+            if row["Locations_id"] in location_ids:
+                self.log("Found location {}".format(row["Locations_id"]))
+            else:
+                # Create new location
+                if row["HOLD"] == "1":
+                    self.log(
+                        "Location {} in Client {} doesn't exists but is marked as Hold".format(
+                            row["location_name"], client.Title
+                        )
+                    )
+                    continue
+                client = api.get_object(client)
+                location = api.create(
+                    client,
+                    "SamplePointLocation",
+                    title=row["location_name"],
+                )
+                location.set_system_location_id(row["Locations_id"])
+                self.log("Create location {}".format(location.Title()), action=True)
+
         return True
 
     def process_systems_rules(self, data):
