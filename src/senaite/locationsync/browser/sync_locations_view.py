@@ -158,6 +158,8 @@ class SyncLocationsView(BrowserView):
         elif file_type == "Contacts":
             success = self.process_contacts_rules(data)
 
+        # TODO this should only be moved after all files are processed
+        # Any errors shold move all to Error folder
         # Move data file
         if success:
             self._move_file(file_name, SYNC_ARCHIVE_FOLDER)
@@ -236,7 +238,13 @@ class SyncLocationsView(BrowserView):
         portal = api.get_portal()
         clients = api.search({"portal_type": "Client"})
         client_ids = [c["getClientID"] for c in clients]
-        for row in data["rows"]:
+        for i, row in enumerate(data["rows"]):
+            if len(row.get("Customer_Number", "")) == 0:
+                self.log(
+                    "Row {} of Account file has no Customer_Number value".format(i),
+                    level="error",
+                )
+                continue
             if row["Customer_Number"] in client_ids:
                 # Client Already Exists
                 client = [
@@ -249,7 +257,6 @@ class SyncLocationsView(BrowserView):
                         self.log(
                             "Client {} already inactive".format(row["Account_name"])
                         )
-                        continue
                     else:
                         api.do_transition_for(client, "deactivate")
                         self.log(
@@ -257,7 +264,7 @@ class SyncLocationsView(BrowserView):
                             action=True,
                         )
                 else:
-                    # Marked in file as active
+                    # marked in file as active
                     if current_state == "inactive":
                         api.do_transition_for(client, "activate")
                         self.log(
@@ -274,16 +281,8 @@ class SyncLocationsView(BrowserView):
                         )
                         client.setTitle(row["Account_name"])
                         client.reindexObject()
-                        continue
-
             else:
-                if row["Inactive"] == "1" or row["On_HOLD"] == "1":
-                    self.log(
-                        "Client {} doesn't exists but is marked as inactive/on_hold".format(
-                            row["Account_name"]
-                        )
-                    )
-                    continue
+                # Client not in DB
                 client = api.create(
                     portal.clients,
                     "Client",
@@ -291,17 +290,39 @@ class SyncLocationsView(BrowserView):
                     title=row["Account_name"],
                 )
                 self.log("Created Client {}".format(row["Account_name"]), action=True)
+                if row["Inactive"] == "1" or row["On_HOLD"] == "1":
+                    api.do_transition_for(client, "deactivate")
+                    self.log(
+                        "Deactivate newly created client {}".format(
+                            row["Account_name"]
+                        ),
+                        action=True,
+                    )
         return True
 
     def process_locations_rules(self, data):
         clients = api.search({"portal_type": "Client"})
         client_ids = [c["getClientID"] for c in clients]
         for i, row in enumerate(data["rows"]):
-            if row["Customer_Number"] not in client_ids:
-                msg = "Client {} on row {} in locations file not found in DB".format(
-                    row["Customer_Number"], i
+            if len(row.get("Customer_Number", "")) == 0:
+                self.log(
+                    "Row {} of Locations file has no Customer_Number value".format(i),
+                    level="error",
                 )
-                self.log(msg, level="error")
+                continue
+            if len(row.get("Locations_id", "")) == 0:
+                self.log(
+                    "Row {} of Locations file has no Locations_id value".format(i),
+                    level="error",
+                )
+                continue
+            if row["Customer_Number"] not in client_ids:
+                self.log(
+                    "Client ID {} on row {} of the locations file was not found in DB".format(
+                        row["Customer_Number"], i
+                    ),
+                    level="error",
+                )
                 continue
             client = [c for c in clients if row["Customer_Number"] == c["getClientID"]][
                 0
@@ -317,16 +338,34 @@ class SyncLocationsView(BrowserView):
             locations = [api.get_object(l) for l in locations]
             location_ids = [l.system_location_id for l in locations]
             if row["Locations_id"] in location_ids:
+                location = [
+                    l
+                    for l in locations
+                    if row["Locations_id"] == l.get_system_location_id()
+                ][0]
+                # TODO update fields
                 self.log("Found location {}".format(row["Locations_id"]))
-            else:
-                # Create new location
                 if row["HOLD"] == "1":
-                    self.log(
-                        "Location {} in Client {} doesn't exists but is marked as Hold".format(
-                            row["location_name"], client.Title
+                    current_state = api.get_workflow_status_of(location)
+                    if current_state == "active":
+                        api.do_transition_for(location, "deactivate")
+                        self.log(
+                            "Location {} in Client {} has been deactivated".format(
+                                row["location_name"], client.Title
+                            ),
+                            action=True,
                         )
-                    )
-                    continue
+                    for system in location.values():
+                        current_state = api.get_workflow_status_of(system)
+                        if current_state == "active":
+                            api.do_transition_for(system, "deactivate")
+                            self.log(
+                                "System {} in Location {} in Client {} has been deactivated".format(
+                                    system.Title(), row["location_name"], client.Title
+                                ),
+                                action=True,
+                            )
+            else:
                 client = api.get_object(client)
                 location = api.create(
                     client,
@@ -334,7 +373,23 @@ class SyncLocationsView(BrowserView):
                     title=row["location_name"],
                 )
                 location.set_system_location_id(row["Locations_id"])
-                self.log("Created location {}".format(location.Title()), action=True)
+                address = self._get_address_field(row)
+                location.address = [address]
+
+                self.log(
+                    "Created location {} in Client {}".format(
+                        location.Title(), client.Title()
+                    ),
+                    action=True,
+                )
+                if row["HOLD"] == "1":
+                    api.do_transition_for(location, "deactivate")
+                    self.log(
+                        "Location {} in Client {} has been deactivated".format(
+                            row["location_name"], client.Title
+                        ),
+                        action=True,
+                    )
 
         return True
 
@@ -401,6 +456,108 @@ class SyncLocationsView(BrowserView):
         return True
 
     def process_contacts_rules(self, data):
+        locations = api.search({"portal_type": "SamplePointLocation"})
+        locations = [api.get_object(l) for l in locations]
+        location_ids = [l.get_system_location_id() for l in locations]
+        for i, row in enumerate(data["rows"]):
+            if len(row.get("contactID", "")) == 0:
+                self.log(
+                    "Contact on row {} in location {} has no contactID field".format(
+                        i, row.get("Locations_id", "missing")
+                    ),
+                    level="error",
+                )
+                continue
+            if len(row.get("Locations_id", "")) == 0:
+                self.log(
+                    "Contact on row {} with contactID {} has no Locations_id field".format(
+                        i, row.get("contactID", "missing")
+                    ),
+                    level="error",
+                )
+                continue
+            if row["Locations_id"] not in location_ids:
+                msg = "Location {} on row {} in contacts file not found in DB".format(
+                    row["Locations_id"], i
+                )
+                self.log(msg, level="error")
+                continue
+
+            self.log("Found Location {}".format(row["Locations_id"]))
+            location = [
+                l
+                for l in locations
+                if row["Locations_id"] == l.get_system_location_id()
+            ][0]
+            location = api.get_object(location)
+            client = location.aq_parent
+            if client.portal_type != "Client":
+                raise RuntimeError(
+                    "Location {} in {} is not inside a client".format(
+                        location.Title(), location.absolute_url()
+                    )
+                )
+            contacts = client.getContacts()
+            contact_ids = [c.ContactId for c in contacts]
+            if row["contactID"] in contact_ids:
+                self.log(
+                    "Found contact {} in location {}".format(
+                        row["contactID"], location.Title()
+                    )
+                )
+                # TODO more processing here
+                continue
+            else:
+                contact = api.create(
+                    client,
+                    "Contact",
+                    Surname=row.get("WS_Contact_Name", "Missing"),
+                )
+                contact.ContactId = row["contactID"]
+                self.log(
+                    "Created contact {} for location {} in client {}".format(
+                        contact.ContactId, location.Title(), client.Title()
+                    ),
+                    action=True,
+                )
+            # TODO Ensure email is correct
+            contact.setEmailAddress(row["email"])
+            self.log(
+                "Added contact {} to location {} in client {}".format(
+                    contact.Title(), location.Title(), client.Title()
+                ),
+                action=True,
+            )
+        return True
+
+    def _get_address_field(self, row):
+        state = row.get("state", "")
+        if len(state) == 0:
+            pass
+        state_vocab = {
+            "VIC": "Victoria",
+            "SA": "South Australia",
+            "WA": "Western Australia",
+            "QLD": "Queensland",
+            "TAS": "Tasmania",
+            "NSW": "New South Wales",
+            "NT": "Northern Territory",
+            "ACT": "Australia Capital Territory",
+        }
+        if state not in state_vocab:
+            raise RuntimeError("Unknown state abbreviation {}".format(state))
+        address = {
+            u"address": row.get("street", ""),
+            u"city": row.get("city", ""),
+            u"country": u"Australia",
+            u"subdivision1": state_vocab[state],
+            u"subdivision2": u"",
+            u"type": u"physical",
+            u"zip": row.get("postcode", ""),
+        }
+        return address
+
+    def old_but_may_be_useful_process_contacts_rules(self, data):
         portal = api.get_portal()
         lab_contacts_folder = portal.bika_setup.bika_labcontacts
         initial_lab_contacts = lab_contacts_folder.values()
