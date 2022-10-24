@@ -16,6 +16,7 @@ SYNC_BASE_FOLDER = "/home/mike/sync"
 SYNC_CURRENT_FOLDER = "{}/current".format(SYNC_BASE_FOLDER)
 SYNC_ARCHIVE_FOLDER = "{}/archive".format(SYNC_BASE_FOLDER)
 SYNC_ERROR_FOLDER = "{}/errors".format(SYNC_BASE_FOLDER)
+SYNC_LOG_FOLDER = "{}/logs".format(SYNC_BASE_FOLDER)
 
 ACCOUNT_FILE_NAME = "Account lims.csv"
 LOCATION_FILE_NAME = "location lims.csv"
@@ -65,14 +66,38 @@ class SyncLocationsView(BrowserView):
     def __call__(self):
         # disable CSRF because
         alsoProvides(self.request, IDisableCSRFProtection)
-        # run syncronisation
-        success = self.sync_locations()
-        if not success:
-            # Send email
-            # TODO
-            pass
+        self.sync_locations()
+
+        errors = [l for l in self.logs if l["level"] == "error"]
+        actions = [l for l in self.logs if l["action"]]
+        # TODO this should only be moved after all files are processed
+        # Any errors shold move all to Error folder
+        # Move data file
+
+        if len(errors) == 0:
+            self._move_file(ACCOUNT_FILE_NAME, SYNC_ARCHIVE_FOLDER)
+            self._move_file(LOCATION_FILE_NAME, SYNC_ARCHIVE_FOLDER)
+            self._move_file(SYSTEM_FILE_NAME, SYNC_ARCHIVE_FOLDER)
+            self._move_file(CONTACT_FILE_NAME, SYNC_ARCHIVE_FOLDER)
+        else:
+            self._move_file(ACCOUNT_FILE_NAME, SYNC_ERROR_FOLDER)
+            self._move_file(LOCATION_FILE_NAME, SYNC_ERROR_FOLDER)
+            self._move_file(SYSTEM_FILE_NAME, SYNC_ERROR_FOLDER)
+            self._move_file(CONTACT_FILE_NAME, SYNC_ERROR_FOLDER)
+
+        logger.info(
+            "Stats: found {} errors and {} actions".format(len(errors), len(actions))
+        )
+        self.write_log_file()
+        # Send email
+        # TODO
         # return the concatenated logs
-        return CR.join(self.logs)
+        return CR.join(
+            [
+                "{} {:10} {}".format(l["time"], str(l["action"]), l["message"])
+                for l in self.logs
+            ]
+        )
 
     def _all_folder_exist(self):
         success = True
@@ -100,6 +125,12 @@ class SyncLocationsView(BrowserView):
                 level="error",
             )
             success = False
+        if not os.path.exists(SYNC_LOG_FOLDER):
+            self.log(
+                "Sync Error Folder {} does not exist".format(SYNC_LOG_FOLDER),
+                level="error",
+            )
+            success = False
         return success
 
     def log(self, message, level="info", action=False):
@@ -108,8 +139,13 @@ class SyncLocationsView(BrowserView):
         :param message: Log message
         :param level: Log level, e.g. debug, info, warning, error
         """
-        if action:
-            message = "Action: {}".format(message)
+        if action is True:
+            action = "TakeAction"
+        else:
+            if action is False:
+                action = "Info"
+            if level == "error":
+                action = "FaultFound"
 
         # log into default facility
         log_level = logging.getLevelName(level.upper())
@@ -117,22 +153,32 @@ class SyncLocationsView(BrowserView):
 
         # Append to logs
         timestamp = DateTime.strftime(DateTime(), "%Y-%m-%d %H:%M:%S")
-        self.logs.append("{}, {}, {}".format(timestamp, log_level, message))
+        self.logs.append(
+            {
+                "time": timestamp,
+                "level": "{}{}".format(level[0].upper(), level[1:].lower()),
+                "action": action,
+                "message": message,
+            }
+        )
 
     def sync_locations(self):
         if not self._all_folder_exist():
-            return False
+            return
         self.log("Folder check was successful")
 
-        self.log("Sync process starting")
+        self.log("Sync process started")
         self.process_file("Accounts", ACCOUNT_FILE_NAME, ACCOUNT_FILE_HEADERS)
         self.process_file("Locations", LOCATION_FILE_NAME, LOCATION_FILE_HEADERS)
         self.process_file("Systems", SYSTEM_FILE_NAME, SYSTEM_FILE_HEADERS)
         self.process_file("Contacts", CONTACT_FILE_NAME, CONTACT_FILE_HEADERS)
-        self.log("Sync process complete")
+        self.log("Sync process completed")
 
     def process_file(self, file_type, file_name, headers=[]):
         data = self.read_file_data(file_type, file_name, headers=headers)
+        if "FileNotFound" in data.get("errors", []):
+            return
+
         self.log(
             "Found {} rows in {} with {} errros".format(
                 len(data["rows"]),
@@ -140,31 +186,18 @@ class SyncLocationsView(BrowserView):
                 len(data["errors"]),
             )
         )
-        if "FileNotFound" in data.get("errors", []):
-            return
-
         if data.get("errors", []):
-            self._move_file(file_name, SYNC_ERROR_FOLDER)
             return
 
         # TODO Process Rules
-        success = False
         if file_type == "Accounts":
-            success = self.process_account_rules(data)
+            self.process_account_rules(data)
         elif file_type == "Locations":
-            success = self.process_locations_rules(data)
+            self.process_locations_rules(data)
         elif file_type == "Systems":
-            success = self.process_systems_rules(data)
+            self.process_systems_rules(data)
         elif file_type == "Contacts":
-            success = self.process_contacts_rules(data)
-
-        # TODO this should only be moved after all files are processed
-        # Any errors shold move all to Error folder
-        # Move data file
-        if success:
-            self._move_file(file_name, SYNC_ARCHIVE_FOLDER)
-        else:
-            self._move_file(file_name, SYNC_ERROR_FOLDER)
+            self.process_contacts_rules(data)
 
     def clean_row(self, row):
         illegal_chars = ["\xef\xbb\xbf"]
@@ -177,8 +210,28 @@ class SyncLocationsView(BrowserView):
             cleaned.append(cell)
         return cleaned
 
+    def write_log_file(self):
+        timestamp = DateTime.strftime(DateTime(), "%Y%m%d-%H%M-%S")
+        timestamp = "aaa"
+        file_name = "SyncLog-{}.csv".format(timestamp)
+        logger.info("Write log file {}".format(file_name))
+        file_path = "{}/{}".format(SYNC_LOG_FOLDER, file_name)
+
+        with open(file_path, "w") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Time", "Action", "Level", "Message"])
+            for log in self.logs:
+                row = [
+                    log["time"],
+                    log["action"],
+                    log["level"],
+                    log["message"],
+                ]
+                writer.writerow(row)
+        logger.info("Log file placed here {}".format(file_path))
+
     def read_file_data(self, file_type, file_name, headers):
-        self.log("Read {} data file starting".format(file_type))
+        # self.log("Get {} data file started".format(file_type))
         file_path = "{}/{}".format(SYNC_CURRENT_FOLDER, file_name)
         if not os.path.exists(file_path):
             self.log("{} file not found".format(file_type), level="error")
@@ -231,8 +284,20 @@ class SyncLocationsView(BrowserView):
 
     def _move_file(self, file_name, dest_folder):
         from_file_path = "{}/{}".format(SYNC_CURRENT_FOLDER, file_name)
-        to_file_path = "{}/{}".format(dest_folder, file_name)
-        os.rename(from_file_path, to_file_path)
+        if os.path.exists(from_file_path):
+            to_file_path = "{}/{}".format(dest_folder, file_name)
+            os.rename(from_file_path, to_file_path)
+            self.log("Moved file {} to {} folder".format(file_name, dest_folder))
+            return
+        dest_file_path = "{}/{}".format(dest_folder, file_name)
+        if os.path.exists(dest_file_path):
+            self.log(
+                "Cannot move file {} because it's already in {} folder".format(
+                    file_name, dest_folder
+                )
+            )
+            return
+        self.log("Cannot move file {}".format(file_name), level="error")
 
     def process_account_rules(self, data):
         portal = api.get_portal()
@@ -262,16 +327,16 @@ class SyncLocationsView(BrowserView):
                     else:
                         api.do_transition_for(client, "deactivate")
                         self.log(
-                            "Deactivate Client {}".format(row["Account_name"]),
-                            action=True,
+                            "Deactivated Client {}".format(row["Account_name"]),
+                            action="Deactivated",
                         )
                 else:
                     # marked in file as active
                     if current_state == "inactive":
                         api.do_transition_for(client, "activate")
                         self.log(
-                            "Activate Client {}".format(row["Account_name"]),
-                            action=True,
+                            "Activated Client {}".format(row["Account_name"]),
+                            action="Activated",
                         )
                     if client.Title != row["Account_name"]:
                         client = api.get_object(client)
@@ -279,7 +344,7 @@ class SyncLocationsView(BrowserView):
                             "Rename Client '{}' title to {}".format(
                                 client.Title(), row["Account_name"]
                             ),
-                            action=True,
+                            action="Renamed",
                         )
                         client.setTitle(row["Account_name"])
                         client.reindexObject()
@@ -291,14 +356,16 @@ class SyncLocationsView(BrowserView):
                     ClientID=row["Customer_Number"],
                     title=row["Account_name"],
                 )
-                self.log("Created Client {}".format(row["Account_name"]), action=True)
+                self.log(
+                    "Created Client {}".format(row["Account_name"]), action="Created"
+                )
                 if row["Inactive"] == "1" or row["On_HOLD"] == "1":
                     api.do_transition_for(client, "deactivate")
                     self.log(
                         "Deactivate newly created client {}".format(
                             row["Account_name"]
                         ),
-                        action=True,
+                        action="Deactivated",
                     )
         return True
 
@@ -378,7 +445,7 @@ class SyncLocationsView(BrowserView):
                     "Created location {} in Client {}".format(
                         location.Title(), client.Title()
                     ),
-                    action=True,
+                    action="Created",
                 )
             # Rules for if location existed or has just been created
             if row["HOLD"] == "1" or row["Cancel_Box"] == "1":
@@ -390,7 +457,7 @@ class SyncLocationsView(BrowserView):
                         "Location {} in Client {} has been deactivated".format(
                             row["location_name"], client.Title()
                         ),
-                        action=True,
+                        action="Deactivated",
                     )
                 for system in location.values():
                     current_state = api.get_workflow_status_of(system)
@@ -400,7 +467,7 @@ class SyncLocationsView(BrowserView):
                             "System {} in Location {} in Client {} has been deactivated".format(
                                 system.Title(), row["location_name"], client.Title()
                             ),
-                            action=True,
+                            action="Deactivated",
                         )
             if row["account_manager1"]:
                 if row["account_manager1"] in lab_contact_names:
@@ -427,7 +494,7 @@ class SyncLocationsView(BrowserView):
                         "Created a Lab Contact {} for location {} and client {}".format(
                             contact.getFullname(), location.Title(), client.Title()
                         ),
-                        action=True,
+                        action="Created",
                     )
                     # TODO Notify lab admin that new lab contact created with no email
                 contacts = location.get_account_managers()
@@ -445,10 +512,10 @@ class SyncLocationsView(BrowserView):
                     contacts.append(contact)
                     location.set_account_managers(contacts)
                     self.log(
-                        "Addd Lab Contact {} to location {} and client {}".format(
+                        "Added Lab Contact {} to location {} and client {}".format(
                             contact.getFullname(), location.Title(), client.Title()
                         ),
-                        action=True,
+                        action="Added",
                     )
                 # Get address from row and update location, new or old
                 address = self._get_address_field(row)
@@ -508,7 +575,7 @@ class SyncLocationsView(BrowserView):
                             "Deactivate System {} in location {} beacuse it's marked as Inactive_Retired_Flag".format(
                                 row["system_name"], location.Title()
                             ),
-                            action=True,
+                            action="Deactivated",
                         )
                         api.do_transition_for(system, "deactivate")
             else:
@@ -532,7 +599,7 @@ class SyncLocationsView(BrowserView):
                     "Created system {} in location {} in client {}".format(
                         system.Title(), location.Title(), client_title
                     ),
-                    action=True,
+                    action="Created",
                 )
             # Update equipment details regardless of new ot old, active or not
             system.EquipmentID = row["Equipment_ID"]
@@ -604,7 +671,7 @@ class SyncLocationsView(BrowserView):
                     "Created contact {} for location {} in client {}".format(
                         contact.ContactId, location.Title(), client.Title()
                     ),
-                    action=True,
+                    action="Created",
                 )
             # TODO Ensure email is correct
             contact.setEmailAddress(row["email"])
@@ -612,7 +679,7 @@ class SyncLocationsView(BrowserView):
                 "Added contact {} to location {} in client {}".format(
                     contact.Title(), location.Title(), client.Title()
                 ),
-                action=True,
+                action="Added",
             )
         return True
 
