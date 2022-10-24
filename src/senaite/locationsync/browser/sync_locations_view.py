@@ -317,6 +317,7 @@ class SyncLocationsView(BrowserView):
         clients = api.search({"portal_type": "Client"})
         client_ids = [c["getClientID"] for c in clients]
         for i, row in enumerate(data["rows"]):
+            # field validation - required fields
             if len(row.get("Customer_Number", "")) == 0:
                 self.log(
                     "Row {} of Locations file has no Customer_Number value".format(i),
@@ -329,6 +330,7 @@ class SyncLocationsView(BrowserView):
                     level="error",
                 )
                 continue
+            # field validation - client must exist
             if row["Customer_Number"] not in client_ids:
                 self.log(
                     "Client ID {} on row {} of the locations file was not found in DB".format(
@@ -336,6 +338,7 @@ class SyncLocationsView(BrowserView):
                     ),
                     level="error",
                 )
+                # TODO notify lab admin
                 continue
             client = [c for c in clients if row["Customer_Number"] == c["getClientID"]][
                 0
@@ -351,14 +354,18 @@ class SyncLocationsView(BrowserView):
             locations = [api.get_object(l) for l in locations]
             location_ids = [l.system_location_id for l in locations]
             if row["Locations_id"] in location_ids:
+                # Location exists
                 location = [
                     l
                     for l in locations
                     if row["Locations_id"] == l.get_system_location_id()
                 ][0]
-                # TODO update fields
+                # If row['HOLD'] or row['Cancel_Box'], see code below
+                # If row['account_manager1'], see code below
+                # For address field in row, see code below
                 self.log("Found location {}".format(row["Locations_id"]))
             else:
+                # Location does NOT exist
                 client = api.get_object(client)
                 title = row["location_name"].replace("/", "")
                 location = api.create(
@@ -367,16 +374,15 @@ class SyncLocationsView(BrowserView):
                     title=title,
                 )
                 location.set_system_location_id(row["Locations_id"])
-                address = self._get_address_field(row)
-                location.address = [address]
-
                 self.log(
                     "Created location {} in Client {}".format(
                         location.Title(), client.Title()
                     ),
                     action=True,
                 )
-            if row["HOLD"] == "1":
+            # Rules for if location existed or has just been created
+            if row["HOLD"] == "1" or row["Cancel_Box"] == "1":
+                # deactivate location and children
                 current_state = api.get_workflow_status_of(location)
                 if current_state == "active":
                     api.do_transition_for(location, "deactivate")
@@ -397,8 +403,6 @@ class SyncLocationsView(BrowserView):
                             action=True,
                         )
             if row["account_manager1"]:
-                # TODO request more details on lab contact
-                # TODO how do we detect contact details have changed
                 if row["account_manager1"] in lab_contact_names:
                     contact = [
                         c
@@ -425,6 +429,7 @@ class SyncLocationsView(BrowserView):
                         ),
                         action=True,
                     )
+                    # TODO Notify lab admin that new lab contact created with no email
                 contacts = location.get_account_managers()
                 if (
                     len(
@@ -445,6 +450,10 @@ class SyncLocationsView(BrowserView):
                         ),
                         action=True,
                     )
+                # Get address from row and update location, new or old
+                address = self._get_address_field(row)
+                location.address = [address]
+
         return True
 
     def process_systems_rules(self, data):
@@ -467,6 +476,7 @@ class SyncLocationsView(BrowserView):
                     row["Location_id"], i
                 )
                 self.log(msg, level="error")
+                # TODO Notify lab admin location not found
                 continue
             location = [
                 l for l in locations if row["Location_id"] == l.get_system_location_id()
@@ -480,9 +490,18 @@ class SyncLocationsView(BrowserView):
                 }
             )
             systems = [api.get_object(s) for s in systems]
-            system_ids = []  # TODO [s.SystemId for s in systems]
-            if row["SystemID"] in system_ids:
-                self.log("Found System {}".format(row["SystemID"]))
+            system = None
+            for sys in systems:
+                if hasattr(sys, "SystemId"):
+                    if sys.SystemId == row["SystemID"]:
+                        system = sys
+                        break
+            if system is not None:
+                self.log(
+                    "Found System {} with ID {} in Location {}".format(
+                        system.Title(), row["SystemID"], location.Title()
+                    )
+                )
             else:
                 # Create new system
                 if row["Inactive_Retired_Flag"] == "1":
@@ -506,6 +525,9 @@ class SyncLocationsView(BrowserView):
                     ),
                     action=True,
                 )
+            system.EquipmentID = row["Equipment_ID"]
+            system.EquipmentType = row["system"]
+            system.EquipmentDescription = row["Equipment_Description2"]
 
         return True
 
