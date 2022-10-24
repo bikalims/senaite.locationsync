@@ -502,12 +502,21 @@ class SyncLocationsView(BrowserView):
                         system.Title(), row["SystemID"], location.Title()
                     )
                 )
+                if row["Inactive_Retired_Flag"] == "1":
+                    if api.get_workflow_status_of(system) == "active":
+                        self.log(
+                            "Deactivate System {} in location {} beacuse it's marked as Inactive_Retired_Flag".format(
+                                row["system_name"], location.Title()
+                            ),
+                            action=True,
+                        )
+                        api.do_transition_for(system, "deactivate")
             else:
                 # Create new system
                 if row["Inactive_Retired_Flag"] == "1":
                     self.log(
                         "System {} in location {} doesn't exists but is marked as Inactive_Retired_Flag".format(
-                            row["system_name"], location.Title
+                            row["system_name"], location.Title()
                         )
                     )
                     continue
@@ -525,6 +534,7 @@ class SyncLocationsView(BrowserView):
                     ),
                     action=True,
                 )
+            # Update equipment details regardless of new ot old, active or not
             system.EquipmentID = row["Equipment_ID"]
             system.EquipmentType = row["system"]
             system.EquipmentDescription = row["Equipment_Description2"]
