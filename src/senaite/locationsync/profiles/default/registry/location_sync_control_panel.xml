@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<registry
+    xmlns:i18n="http://xml.zope.org/namespaces/i18n"
+    i18n:domain="senaite.locationsync">
+
+<!-- -*- extra stuff goes here -*- -->
+
+  <records interface="senaite.locationsync.controlpanels.location_sync_control_panel.controlpanel.ILocationSyncControlPanel"
+           prefix="senaite.locationsync.location_sync_control_panel" />
+
+
+</registry>

@@ -1,0 +1,21 @@
+<configure
+    xmlns="http://namespaces.zope.org/zope"
+    xmlns:browser="http://namespaces.zope.org/browser"
+    xmlns:i18n="http://namespaces.zope.org/i18n"
+    xmlns:plone="http://namespaces.plone.org/plone"
+    i18n_domain="senaite.locationsync">
+
+  <browser:page
+    name="location_sync_control_panel-controlpanel"
+    for="Products.CMFPlone.interfaces.IPloneSiteRoot"
+    class=".controlpanel.LocationSyncControlPanelView"
+    layer="senaite.locationsync.interfaces.ISenaiteLocationsyncLayer"
+    permission="cmf.ManagePortal"
+    />
+
+  <adapter
+    factory=".controlpanel.LocationSyncControlPanelConfigletPanel"
+    name="location_sync_control_panel" />
+
+
+</configure>

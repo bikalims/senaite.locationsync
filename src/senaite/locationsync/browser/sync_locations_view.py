@@ -5,19 +5,12 @@ from DateTime import DateTime
 import logging
 import os
 from plone.protect.interfaces import IDisableCSRFProtection
-from senaite import api
-from senaite.core import logger
-from zope.interface import alsoProvides
 from Products.Five.browser import BrowserView
-from zope.interface import Interface
+from senaite.core import logger
+from senaite import api
+from zope.interface import Interface, alsoProvides
 
 CR = "\n"
-SYNC_BASE_FOLDER = "/home/mike/sync"
-SYNC_CURRENT_FOLDER = "{}/current".format(SYNC_BASE_FOLDER)
-SYNC_ARCHIVE_FOLDER = "{}/archive".format(SYNC_BASE_FOLDER)
-SYNC_ERROR_FOLDER = "{}/errors".format(SYNC_BASE_FOLDER)
-SYNC_LOG_FOLDER = "{}/logs".format(SYNC_BASE_FOLDER)
-
 ACCOUNT_FILE_NAME = "Account lims.csv"
 LOCATION_FILE_NAME = "location lims.csv"
 SYSTEM_FILE_NAME = "system lims.csv"
@@ -62,6 +55,13 @@ class SyncLocationsView(BrowserView):
         self.context = context
         self.request = request
         self.logs = []
+        self.sync_base_folder = api.get_registry_record(
+            "senaite.locationsync.location_sync_control_panel.sync_base_folder"
+        )
+        self.sync_current_folder = "{}/current".format(self.sync_base_folder)
+        self.sync_archive_folder = "{}/archive".format(self.sync_base_folder)
+        self.sync_error_folder = "{}/errors".format(self.sync_base_folder)
+        self.sync_logs_folder = "{}/logs".format(self.sync_base_folder)
 
     def __call__(self):
         # disable CSRF because
@@ -75,15 +75,15 @@ class SyncLocationsView(BrowserView):
         # Move data file
 
         if len(errors) == 0:
-            self._move_file(ACCOUNT_FILE_NAME, SYNC_ARCHIVE_FOLDER)
-            self._move_file(LOCATION_FILE_NAME, SYNC_ARCHIVE_FOLDER)
-            self._move_file(SYSTEM_FILE_NAME, SYNC_ARCHIVE_FOLDER)
-            self._move_file(CONTACT_FILE_NAME, SYNC_ARCHIVE_FOLDER)
+            self._move_file(ACCOUNT_FILE_NAME, self.sync_archive_folder)
+            self._move_file(LOCATION_FILE_NAME, self.sync_archive_folder)
+            self._move_file(SYSTEM_FILE_NAME, self.sync_archive_folder)
+            self._move_file(CONTACT_FILE_NAME, self.sync_archive_folder)
         else:
-            self._move_file(ACCOUNT_FILE_NAME, SYNC_ERROR_FOLDER)
-            self._move_file(LOCATION_FILE_NAME, SYNC_ERROR_FOLDER)
-            self._move_file(SYSTEM_FILE_NAME, SYNC_ERROR_FOLDER)
-            self._move_file(CONTACT_FILE_NAME, SYNC_ERROR_FOLDER)
+            self._move_file(ACCOUNT_FILE_NAME, self.sync_error_folder)
+            self._move_file(LOCATION_FILE_NAME, self.sync_error_folder)
+            self._move_file(SYSTEM_FILE_NAME, self.sync_error_folder)
+            self._move_file(CONTACT_FILE_NAME, self.sync_error_folder)
 
         logger.info(
             "Stats: found {} errors and {} actions".format(len(errors), len(actions))
@@ -101,33 +101,37 @@ class SyncLocationsView(BrowserView):
 
     def _all_folder_exist(self):
         success = True
-        if not os.path.exists(SYNC_BASE_FOLDER):
+        if not os.path.exists(self.sync_base_folder):
             self.log(
-                "Sync Base Folder {} does not exist".format(SYNC_BASE_FOLDER),
+                "Sync Base Folder {} does not exist".format(self.sync_base_folder),
                 level="error",
             )
             success = False
-        if not os.path.exists(SYNC_CURRENT_FOLDER):
+        if not os.path.exists(self.sync_current_folder):
             self.log(
-                "Sync Current Folder {} does not exist".format(SYNC_CURRENT_FOLDER),
+                "Sync Current Folder {} does not exist".format(
+                    self.sync_current_folder
+                ),
                 level="error",
             )
             success = False
-        if not os.path.exists(SYNC_ARCHIVE_FOLDER):
+        if not os.path.exists(self.sync_archive_folder):
             self.log(
-                "Sync Archive Folder {} does not exist".format(SYNC_ARCHIVE_FOLDER),
+                "Sync Archive Folder {} does not exist".format(
+                    self.sync_archive_folder
+                ),
                 level="error",
             )
             success = False
-        if not os.path.exists(SYNC_ERROR_FOLDER):
+        if not os.path.exists(self.sync_error_folder):
             self.log(
-                "Sync Error Folder {} does not exist".format(SYNC_ERROR_FOLDER),
+                "Sync Error Folder {} does not exist".format(self.sync_error_folder),
                 level="error",
             )
             success = False
-        if not os.path.exists(SYNC_LOG_FOLDER):
+        if not os.path.exists(self.sync_logs_folder):
             self.log(
-                "Sync Error Folder {} does not exist".format(SYNC_LOG_FOLDER),
+                "Sync Error Folder {} does not exist".format(self.sync_logs_folder),
                 level="error",
             )
             success = False
@@ -212,10 +216,10 @@ class SyncLocationsView(BrowserView):
 
     def write_log_file(self):
         timestamp = DateTime.strftime(DateTime(), "%Y%m%d-%H%M-%S")
-        timestamp = "aaa"
+        # TODO for testing timestamp = "aaa"
         file_name = "SyncLog-{}.csv".format(timestamp)
         logger.info("Write log file {}".format(file_name))
-        file_path = "{}/{}".format(SYNC_LOG_FOLDER, file_name)
+        file_path = "{}/{}".format(self.sync_logs_folder, file_name)
 
         with open(file_path, "w") as f:
             writer = csv.writer(f)
@@ -232,7 +236,7 @@ class SyncLocationsView(BrowserView):
 
     def read_file_data(self, file_type, file_name, headers):
         # self.log("Get {} data file started".format(file_type))
-        file_path = "{}/{}".format(SYNC_CURRENT_FOLDER, file_name)
+        file_path = "{}/{}".format(self.sync_current_folder, file_name)
         if not os.path.exists(file_path):
             self.log("{} file not found".format(file_type), level="error")
             return {"headers": [], "rows": [], "errors": ["FileNotFound"]}
@@ -283,7 +287,7 @@ class SyncLocationsView(BrowserView):
         return {"headers": headers, "rows": rows, "errors": errors}
 
     def _move_file(self, file_name, dest_folder):
-        from_file_path = "{}/{}".format(SYNC_CURRENT_FOLDER, file_name)
+        from_file_path = "{}/{}".format(self.sync_current_folder, file_name)
         if os.path.exists(from_file_path):
             to_file_path = "{}/{}".format(dest_folder, file_name)
             os.rename(from_file_path, to_file_path)
@@ -700,12 +704,12 @@ class SyncLocationsView(BrowserView):
         if state not in state_vocab:
             raise RuntimeError("Unknown state abbreviation {}".format(state))
         address = {
-            u"address": row.get("street", ""),
-            u"city": row.get("city", ""),
-            u"country": u"Australia",
-            u"subdivision1": state_vocab[state],
-            u"subdivision2": u"",
-            u"type": u"physical",
-            u"zip": row.get("postcode", ""),
+            "address": row.get("street", ""),
+            "city": row.get("city", ""),
+            "country": "Australia",
+            "subdivision1": state_vocab[state],
+            "subdivision2": "",
+            "type": "physical",
+            "zip": row.get("postcode", ""),
         }
         return address
