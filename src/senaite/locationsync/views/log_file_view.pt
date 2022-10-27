@@ -8,9 +8,12 @@
   <metal:content-core fill-slot="content-core">
   <metal:block define-macro="content-core">
 
-      <h2 i18n:translate="">Sample View</h2>
-      <!--<div tal:replace="view/my_custom_view_method" />-->
-      <!--<div tal:replace="context/my_custom_field" />-->
+      <h2 i18n:translate="">Log Files</h2>
+      <div tal:define="data view/get_data">
+        <tal:loop tal:repeat="file data/files">
+          <a tal:attributes="href file/url" tal:content="file/name"/>
+        </tal:loop>
+      </div>
 
   </metal:block>
   </metal:content-core>

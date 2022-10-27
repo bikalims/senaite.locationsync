@@ -7,10 +7,9 @@ import os
 from DateTime import DateTime
 from plone.protect.interfaces import IDisableCSRFProtection
 from Products.Five.browser import BrowserView
+from senaite import api
 from senaite.core import logger
 from zope.interface import Interface, alsoProvides
-
-from senaite import api
 
 CR = "\n"
 ACCOUNT_FILE_NAME = "Account lims.csv"
