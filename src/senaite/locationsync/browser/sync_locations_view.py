@@ -1,14 +1,16 @@
 # -*- coding: utf-8 -*-
 
 import csv
-from DateTime import DateTime
 import logging
 import os
+
+from DateTime import DateTime
 from plone.protect.interfaces import IDisableCSRFProtection
 from Products.Five.browser import BrowserView
 from senaite.core import logger
-from senaite import api
 from zope.interface import Interface, alsoProvides
+
+from senaite import api
 
 CR = "\n"
 ACCOUNT_FILE_NAME = "Account lims.csv"
