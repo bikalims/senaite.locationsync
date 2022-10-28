@@ -8,6 +8,8 @@ SYNC_ERROR_FOLDER = "{}/errors".format(SYNC_BASE_FOLDER)
 
 def _move_file(file_name, src_folder, dest_folder):
     from_file_path = "{}/{}".format(src_folder, file_name)
+    parts = file_name.split(".")
+    file_name = "{}.csv".format(".".join(parts[:-3]))
     to_file_path = "{}/{}".format(dest_folder, file_name)
     os.rename(from_file_path, to_file_path)
 

@@ -68,8 +68,7 @@ class SyncLocationsView(BrowserView):
         # disable CSRF because
         alsoProvides(self.request, IDisableCSRFProtection)
         self.sync_locations()
-
-        errors = [l for l in self.logs if l["level"] == "error"]
+        errors = [l for l in self.logs if l["level"].lower() == "error"]
         actions = [l for l in self.logs if l["action"]]
         # TODO this should only be moved after all files are processed
         # Any errors shold move all to Error folder
@@ -290,7 +289,9 @@ class SyncLocationsView(BrowserView):
     def _move_file(self, file_name, dest_folder):
         from_file_path = "{}/{}".format(self.sync_current_folder, file_name)
         if os.path.exists(from_file_path):
-            to_file_path = "{}/{}".format(dest_folder, file_name)
+            file_name = ".".join(file_name.split(".")[:-1])
+            timestamp = DateTime.strftime(DateTime(), "%Y%m%d.%H%M")
+            to_file_path = "{}/{}.{}.csv".format(dest_folder, file_name, timestamp)
             os.rename(from_file_path, to_file_path)
             self.log("Moved file {} to {} folder".format(file_name, dest_folder))
             return
