@@ -11,7 +11,7 @@
       <h2 i18n:translate="">Log Files</h2>
       <div tal:define="data view/get_data">
         <tal:loop tal:repeat="file data/files">
-          <a tal:attributes="href file/url" tal:content="file/name"/>
+          <p><a tal:attributes="href file/url" tal:content="file/name"/></p>
         </tal:loop>
       </div>
 

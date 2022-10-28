@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 # from senaite.locationsync import _
+import glob
 import logging
 import os
 from Products.Five.browser import BrowserView
@@ -33,7 +34,9 @@ class LogFileView(BrowserView):
         if base_folder:
             path = "{}/logs".format(base_folder)
             if os.path.exists(path):
-                listing = os.listdir(path)
+                listing = glob.glob(path + "/*")
+                listing.sort(key=lambda x: os.path.getmtime(x))
+                listing = [f.split("/")[-1] for f in listing]
                 for name in listing:
                     # TODO url hardcoded!!!
                     file_dict = {
