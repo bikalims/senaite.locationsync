@@ -37,15 +37,18 @@ class LogFileView(BrowserView):
                 listing = glob.glob(path + "/*")
                 listing.sort(key=lambda x: os.path.getmtime(x), reverse=True)
                 listing = [f.split("/")[-1] for f in listing]
+                site_name = self.context.getPhysicalPath()[1]
+                if site_name not in self.context.absolute_url():
+                    site_name is None
                 for name in listing:
                     # TODO url hardcoded!!!
                     file_dict = {
                         "name": name,
                         "url": "/@@get_log_file?name={}".format(name),
                     }
-                    if "localhost" in self.context.absolute_url():
-                        file_dict["url"] = "/senaite3/@@get_log_file?name={}".format(
-                            name
+                    if site_name is not None:
+                        file_dict["url"] = "/{}/@@get_log_file?name={}".format(
+                            site_name, name
                         )
 
                     files.append(file_dict)
