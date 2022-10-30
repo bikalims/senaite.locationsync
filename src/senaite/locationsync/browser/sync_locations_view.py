@@ -84,6 +84,9 @@ class SyncLocationsView(BrowserView):
         # Any errors shold move all to Error folder
         # Move data file
 
+        self.log(
+            "Stats: found {} errors and {} actions".format(len(errors), len(actions))
+        )
         if len(errors) == 0:
             self._move_file(ACCOUNT_FILE_NAME, self.sync_archive_folder)
             self._move_file(LOCATION_FILE_NAME, self.sync_archive_folder)
@@ -96,9 +99,6 @@ class SyncLocationsView(BrowserView):
             self._move_file(CONTACT_FILE_NAME, self.sync_error_folder)
             transaction.abort()
 
-        self.log(
-            "Stats: found {} errors and {} actions".format(len(errors), len(actions))
-        )
         self.write_log_file()
         # Send email
         # TODO
