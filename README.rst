@@ -2,15 +2,15 @@
    If you want to learn more about writing documentation, please check out: http://docs.plone.org/about/documentation_styleguide.html
    This text does not appear on pypi or github. It is a comment.
 
-.. image:: https://github.com/collective/senaite.locationsync/actions/workflows/plone-package.yml/badge.svg
-    :target: https://github.com/collective/senaite.locationsync/actions/workflows/plone-package.yml
+.. image:: https://github.com/bikalims/senaite.locationsync/actions/workflows/plone-package.yml/badge.svg
+    :target: https://github.com/bikalims/senaite.locationsync/actions/workflows/plone-package.yml
 
-.. image:: https://coveralls.io/repos/github/collective/senaite.locationsync/badge.svg?branch=main
-    :target: https://coveralls.io/github/collective/senaite.locationsync?branch=main
+.. image:: https://coveralls.io/repos/github/bikalims/senaite.locationsync/badge.svg?branch=main
+    :target: https://coveralls.io/github/bikalims/senaite.locationsync?branch=main
     :alt: Coveralls
 
-.. image:: https://codecov.io/gh/collective/senaite.locationsync/branch/master/graph/badge.svg
-    :target: https://codecov.io/gh/collective/senaite.locationsync
+.. image:: https://codecov.io/gh/bikalims/senaite.locationsync/branch/master/graph/badge.svg
+    :target: https://codecov.io/gh/bikalims/senaite.locationsync
 
 .. image:: https://img.shields.io/pypi/v/senaite.locationsync.svg
     :target: https://pypi.python.org/pypi/senaite.locationsync/
@@ -93,9 +93,8 @@ Put your name here, you deserve it!
 Contribute
 ----------
 
-- Issue Tracker: https://github.com/collective/senaite.locationsync/issues
-- Source Code: https://github.com/collective/senaite.locationsync
-- Documentation: https://docs.plone.org/foo/bar
+- Issue Tracker: https://github.com/bikalims/senaite.locationsync/issues
+- Source Code: https://github.com/bikalims/senaite.locationsync
 
 
 Support
