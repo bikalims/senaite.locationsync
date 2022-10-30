@@ -9,6 +9,8 @@ from plone.protect.interfaces import IDisableCSRFProtection
 from Products.Five.browser import BrowserView
 from senaite import api
 from senaite.core import logger
+
+import transaction
 from zope.interface import Interface, alsoProvides
 
 CR = "\n"
@@ -65,6 +67,14 @@ class SyncLocationsView(BrowserView):
         self.sync_logs_folder = "{}/logs".format(self.sync_base_folder)
 
     def __call__(self):
+        if (
+            self.sync_base_folder is None
+            or len(self.sync_base_folder) == 0
+            or not os.path.exists(self.sync_base_folder)
+        ):
+            raise RuntimeError(
+                "Sync Base Folder value on Control Panel is not set correctly"
+            )
         # disable CSRF because
         alsoProvides(self.request, IDisableCSRFProtection)
         self.sync_locations()
@@ -84,8 +94,9 @@ class SyncLocationsView(BrowserView):
             self._move_file(LOCATION_FILE_NAME, self.sync_error_folder)
             self._move_file(SYSTEM_FILE_NAME, self.sync_error_folder)
             self._move_file(CONTACT_FILE_NAME, self.sync_error_folder)
+            transaction.abort()
 
-        logger.info(
+        self.log(
             "Stats: found {} errors and {} actions".format(len(errors), len(actions))
         )
         self.write_log_file()
@@ -280,7 +291,22 @@ class SyncLocationsView(BrowserView):
                 # Process cells in row
                 adict = {}
                 for idx, cell in enumerate(row):
-                    adict[headers[idx]] = row[idx]
+                    try:
+                        val = row[idx].decode("utf-8", "strict")
+                    except UnicodeDecodeError:
+                        self.log(
+                            "Error on row {} of file {} because of decoding of value {} in field {}. But offending characters have been replaced with spaces".format(
+                                i,
+                                file_name,
+                                row[idx],
+                                headers[idx],
+                            ),
+                            level="warn",
+                        )
+                        val = (
+                            row[idx].decode("utf-8", "replace").replace(u"\ufffd", " ")
+                        )
+                    adict[headers[idx]] = val
                 rows.append(adict)
                 # self.log("File {} row {}: {}".format(file_name, i, ", ".join(row)))
         self.log("Read {} data file complete".format(file_type))
@@ -311,7 +337,9 @@ class SyncLocationsView(BrowserView):
         # Prep clients
         clients = api.search({"portal_type": "Client"})
         client_ids = [c["getClientID"] for c in clients]
+        num_rows = len(data["rows"])
         for i, row in enumerate(data["rows"]):
+            logger.info("Process row {} of {} from Accounts file".format(i, num_rows))
             if len(row.get("Customer_Number", "")) == 0:
                 self.log(
                     "Row {} of Account file has no Customer_Number value".format(i),
@@ -362,6 +390,7 @@ class SyncLocationsView(BrowserView):
                     ClientID=row["Customer_Number"],
                     title=row["Account_name"],
                 )
+
                 self.log(
                     "Created Client {}".format(row["Account_name"]), action="Created"
                 )
@@ -389,7 +418,9 @@ class SyncLocationsView(BrowserView):
         # Prep clients
         clients = api.search({"portal_type": "Client"})
         client_ids = [c["getClientID"] for c in clients]
+        num_rows = len(data["rows"])
         for i, row in enumerate(data["rows"]):
+            logger.info("Process row {} of {} from Locations file".format(i, num_rows))
             # field validation - required fields
             if len(row.get("Customer_Number", "")) == 0:
                 self.log(
@@ -416,7 +447,7 @@ class SyncLocationsView(BrowserView):
             client = [c for c in clients if row["Customer_Number"] == c["getClientID"]][
                 0
             ]
-            self.log("Found Client {}".format(row["Customer_Number"]))
+            self.log("Found Client {}".format(client.Title))
             locations = api.search(
                 {
                     "portal_type": "SamplePointLocation",
@@ -439,17 +470,17 @@ class SyncLocationsView(BrowserView):
                 self.log("Found location {}".format(row["Locations_id"]))
             else:
                 # Location does NOT exist
-                client = api.get_object(client)
+                client_obj = api.get_object(client)
                 title = row["location_name"].replace("/", "")
                 location = api.create(
-                    client,
+                    client_obj,
                     "SamplePointLocation",
                     title=title,
                 )
                 location.set_system_location_id(row["Locations_id"])
                 self.log(
                     "Created location {} in Client {}".format(
-                        location.Title(), client.Title()
+                        location.Title(), client.Title
                     ),
                     action="Created",
                 )
@@ -461,7 +492,7 @@ class SyncLocationsView(BrowserView):
                     api.do_transition_for(location, "deactivate")
                     self.log(
                         "Location {} in Client {} has been deactivated".format(
-                            row["location_name"], client.Title()
+                            location.Title(), client.Title
                         ),
                         action="Deactivated",
                     )
@@ -471,7 +502,7 @@ class SyncLocationsView(BrowserView):
                         api.do_transition_for(system, "deactivate")
                         self.log(
                             "System {} in Location {} in Client {} has been deactivated".format(
-                                system.Title(), row["location_name"], client.Title()
+                                system.Title(), location.Title(), client.Title
                             ),
                             action="Deactivated",
                         )
@@ -488,17 +519,21 @@ class SyncLocationsView(BrowserView):
                         ),
                     )
                 else:
+                    surname = row["account_manager1"].split(" ")[-1]
                     contact = api.create(
                         lab_contacts_folder,
                         "LabContact",
-                        Firstname=" ".join(row["account_manager1"].split(" ")[:-1]),
-                        Surname=row["account_manager1"].split(" ")[-1],
+                        Surname=surname,
                     )
+                    firstname = " ".join(row["account_manager1"].split(" ")[:-1])
+                    if len(firstname) > 0:
+                        contact.setFirstname(firstname)
+
                     lab_contacts.append(contact)
                     lab_contact_names.append(contact.getFullname())
                     self.log(
                         "Created a Lab Contact {} for location {} and client {}".format(
-                            contact.getFullname(), location.Title(), client.Title()
+                            contact.getFullname(), location.Title(), client.Title
                         ),
                         action="Created",
                     )
@@ -519,12 +554,12 @@ class SyncLocationsView(BrowserView):
                     location.set_account_managers(contacts)
                     self.log(
                         "Added Lab Contact {} to location {} and client {}".format(
-                            contact.getFullname(), location.Title(), client.Title()
+                            contact.getFullname(), location.Title(), client.Title
                         ),
                         action="Added",
                     )
                 # Get address from row and update location, new or old
-                address = self._get_address_field(row)
+                address = self._get_address_field(row, row_num=i)
                 location.address = [address]
 
         return True
@@ -533,7 +568,9 @@ class SyncLocationsView(BrowserView):
         locations = api.search({"portal_type": "SamplePointLocation"})
         locations = [api.get_object(l) for l in locations]
         location_ids = [l.get_system_location_id() for l in locations]
+        num_rows = len(data["rows"])
         for i, row in enumerate(data["rows"]):
+            logger.info("Process row {} of {} from Systems file".format(i, num_rows))
             if len(row.get("SystemID", "")) == 0:
                 self.log(
                     "System on row {} with name {} in location {} has no SystemID field".format(
@@ -618,7 +655,9 @@ class SyncLocationsView(BrowserView):
         locations = api.search({"portal_type": "SamplePointLocation"})
         locations = [api.get_object(l) for l in locations]
         location_ids = [l.get_system_location_id() for l in locations]
+        num_rows = len(data["rows"])
         for i, row in enumerate(data["rows"]):
+            logger.info("Process row {} of {} from Contacts file".format(i, num_rows))
             if len(row.get("contactID", "")) == 0:
                 self.log(
                     "Contact on row {} in location {} has no contactID field".format(
@@ -689,7 +728,7 @@ class SyncLocationsView(BrowserView):
             )
         return True
 
-    def _get_address_field(self, row):
+    def _get_address_field(self, row, row_num):
         state = row.get("state", "")
         if len(state) == 0:
             pass
@@ -704,14 +743,54 @@ class SyncLocationsView(BrowserView):
             "ACT": "Australia Capital Territory",
         }
         if state not in state_vocab:
-            raise RuntimeError("Unknown state abbreviation {}".format(state))
+            self.log(
+                "Unknown state abbreviation {} on row {} of the locations file".format(
+                    state, row_num
+                ),
+                level="warn",
+            )
+            div1 = state
+        else:
+            div1 = state_vocab[state]
         address = {
             "address": row.get("street", ""),
             "city": row.get("city", ""),
             "country": "Australia",
-            "subdivision1": state_vocab[state],
+            "subdivision1": div1,
             "subdivision2": "",
             "type": "physical",
             "zip": row.get("postcode", ""),
         }
         return address
+
+    def _create_client(self, context, number, title, row_num):
+        try:
+            client = api.create(context, "Client", ClientID=number, title=title)
+            return client
+        except UnicodeDecodeError as e:
+            title = title.decode("utf-8", "replace").replace(u"\ufffd", " ")
+            try:
+                client = api.create(context, "Client", ClientID=number, title=title)
+                self.log(
+                    "Failed creating Customer with Number {} and Name {} on row {} because of decoding error {} but managed to recover by replace offending characters with spaces".format(
+                        number, title, row_num, e
+                    ),
+                    level="warn",
+                )
+                return client
+            except Exception as e:
+                self.log(
+                    "Failed creating Customer with Number {} and Name {} on row {} because of error {}".format(
+                        number, title, row_num, e
+                    ),
+                    level="error",
+                )
+                return None
+        except Exception as e:
+            self.log(
+                "Failed creating Customer with Number {} and Name {} on row {} because of error {}".format(
+                    number, title, row_num, e
+                ),
+                level="error",
+            )
+            return None

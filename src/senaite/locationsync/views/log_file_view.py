@@ -35,7 +35,7 @@ class LogFileView(BrowserView):
             path = "{}/logs".format(base_folder)
             if os.path.exists(path):
                 listing = glob.glob(path + "/*")
-                listing.sort(key=lambda x: os.path.getmtime(x))
+                listing.sort(key=lambda x: os.path.getmtime(x), reverse=True)
                 listing = [f.split("/")[-1] for f in listing]
                 for name in listing:
                     # TODO url hardcoded!!!
