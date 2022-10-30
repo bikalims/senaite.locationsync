@@ -32,10 +32,8 @@ setup(
     author_email="mike@webtide.co.za",
     url="https://github.com/collective/senaite.locationsync",
     project_urls={
-        "PyPI": "https://pypi.python.org/pypi/senaite.locationsync",
-        "Source": "https://github.com/collective/senaite.locationsync",
-        "Tracker": "https://github.com/collective/senaite.locationsync/issues",
-        # 'Documentation': 'https://senaite.locationsync.readthedocs.io/en/latest/',
+        "Source": "https://github.com/bikalims/senaite.locationsync",
+        "Tracker": "https://github.com/bikalims/senaite.locationsync/issues",
     },
     license="GPL version 2",
     packages=find_packages("src", exclude=["ez_setup"]),
