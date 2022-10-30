@@ -30,7 +30,7 @@ setup(
     keywords="Python Plone CMS",
     author="Mike Metcalfe",
     author_email="mike@webtide.co.za",
-    url="https://github.com/collective/senaite.locationsync",
+    url="https://github.com/bikalims/senaite.locationsync",
     project_urls={
         "Source": "https://github.com/bikalims/senaite.locationsync",
         "Tracker": "https://github.com/bikalims/senaite.locationsync/issues",
