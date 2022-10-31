@@ -82,9 +82,11 @@ class SyncLocationsView(BrowserView):
             or len(self.sync_base_folder) == 0
             or not os.path.exists(self.sync_base_folder)
         ):
-            raise RuntimeError(
-                "Sync Base Folder value on Control Panel is not set correctly"
-            )
+            msg = "Sync Base Folder value on Control Panel is not set correctly"
+            IStatusMessage(self.request).addStatusMessage(_(msg), "error")
+            self.request.response.redirect(self.context.absolute_url())
+            return
+
         msg = "Location syncronization could take some time so the results will be emailed when complete"
         IStatusMessage(self.request).addStatusMessage(_(msg), "info")
         self.request.response.redirect(self.context.absolute_url())
