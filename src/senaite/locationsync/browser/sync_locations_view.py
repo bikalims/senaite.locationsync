@@ -7,8 +7,10 @@ import os
 from plone.protect.interfaces import IDisableCSRFProtection
 from Products.Five.browser import BrowserView
 from Products.CMFPlone.utils import safe_unicode
+from Products.statusmessages.interfaces import IStatusMessage
 from senaite import api
 from senaite.core import logger
+from senaite.locationsync import _
 import transaction
 from zope.interface import Interface, alsoProvides
 
@@ -83,6 +85,10 @@ class SyncLocationsView(BrowserView):
             raise RuntimeError(
                 "Sync Base Folder value on Control Panel is not set correctly"
             )
+        msg = "Location syncronization could take some time so the results will be emailed when complete"
+        IStatusMessage(self.request).addStatusMessage(_(msg), "info")
+        self.request.response.redirect(self.context.absolute_url())
+
         # disable CSRF because
         alsoProvides(self.request, IDisableCSRFProtection)
         self.sync_locations()
