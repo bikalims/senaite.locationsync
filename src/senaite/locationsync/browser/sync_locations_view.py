@@ -1,17 +1,23 @@
 # -*- coding: utf-8 -*-
 
 import csv
+from DateTime import DateTime
 import logging
 import os
-
-from DateTime import DateTime
 from plone.protect.interfaces import IDisableCSRFProtection
 from Products.Five.browser import BrowserView
+from Products.CMFPlone.utils import safe_unicode
 from senaite import api
 from senaite.core import logger
-
 import transaction
 from zope.interface import Interface, alsoProvides
+
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
+# from email.utils import formataddr
+from smtplib import SMTPRecipientsRefused
+from smtplib import SMTPServerDisconnected
 
 CR = "\n"
 ACCOUNT_FILE_NAME = "Account lims.csv"
@@ -67,6 +73,8 @@ class SyncLocationsView(BrowserView):
         self.sync_logs_folder = "{}/logs".format(self.sync_base_folder)
 
     def __call__(self):
+        no_abort = self.request.form.get("no-abort") is not None
+        logger.info("SyncLocationsView: no_abort = {}".format(no_abort))
         if (
             self.sync_base_folder is None
             or len(self.sync_base_folder) == 0
@@ -80,13 +88,11 @@ class SyncLocationsView(BrowserView):
         self.sync_locations()
         errors = [l for l in self.logs if l["level"].lower() == "error"]
         actions = [l for l in self.logs if l["action"]]
-        # TODO this should only be moved after all files are processed
-        # Any errors shold move all to Error folder
-        # Move data file
 
         self.log(
             "Stats: found {} errors and {} actions".format(len(errors), len(actions))
         )
+        # Move data files
         if len(errors) == 0:
             self._move_file(ACCOUNT_FILE_NAME, self.sync_archive_folder)
             self._move_file(LOCATION_FILE_NAME, self.sync_archive_folder)
@@ -97,11 +103,16 @@ class SyncLocationsView(BrowserView):
             self._move_file(LOCATION_FILE_NAME, self.sync_error_folder)
             self._move_file(SYSTEM_FILE_NAME, self.sync_error_folder)
             self._move_file(CONTACT_FILE_NAME, self.sync_error_folder)
-            transaction.abort()
+            if not no_abort:
+                logger.info("Abort all transactions because errors we found")
+                transaction.abort()
 
-        self.write_log_file()
+        # Create log file
+        log_file_name = self.write_log_file()
+
         # Send email
-        # TODO
+        self.send_email(errors, actions, log_file_name)
+
         # return the concatenated logs
         return CR.join(
             [
@@ -109,6 +120,50 @@ class SyncLocationsView(BrowserView):
                 for l in self.logs
             ]
         )
+
+    def send_email(self, errors, actions, log_file_name):
+        lab = api.get_setup().laboratory
+        supervisor = lab.getSupervisor()
+        if not supervisor:
+            raise RuntimeError("Lab has no supervisor")
+        name = safe_unicode(supervisor.getFullname()).encode("utf-8")
+        email = safe_unicode(lab.getEmailAddress()).encode("utf-8")
+        timestamp = DateTime.strftime(DateTime(), "%Y-%m-%d %H:%M")
+        # site_name = self.context.getPhysicalPath()[1]
+        # if site_name not in self.context.absolute_url():
+        #     site_name is None
+        file_url = "{}/@@get_log_file?name={}".format(
+            self.context.absolute_url(), log_file_name
+        )
+        # if site_name is not None:
+        #     file_url = "/{}/@@get_log_file?name={}".format(site_name, log_file_name)
+        html = """
+        Hi {},
+
+        The location syncronization run completed at {} with {} errors.
+        The log file can be found here: {}
+
+        Regards,
+        """.format(
+            name, timestamp, len(errors), file_url
+        )
+        html = safe_unicode(html).encode("utf-8")
+        mime_msg = MIMEMultipart("related")
+        mime_msg["Subject"] = "Location syncronization results"
+        mime_msg["From"] = "%s (%s)" % (name, email)
+        mime_msg["To"] = "%s (%s)" % (name, email)
+        mime_msg.preamble = "This is a multi-part MIME message."
+        msg_txt = MIMEText(html, _subtype="html")
+        mime_msg.attach(msg_txt)
+
+        # Send the email
+        try:
+            host = api.get_tool("MailHost")
+            host.send(mime_msg.as_string(), immediate=True)
+        except SMTPServerDisconnected as msg:
+            raise SMTPServerDisconnected(msg)
+        except SMTPRecipientsRefused as msg:
+            raise SMTPRecipientsRefused(msg)
 
     def _all_folder_exist(self):
         success = True
@@ -244,6 +299,7 @@ class SyncLocationsView(BrowserView):
                 ]
                 writer.writerow(row)
         logger.info("Log file placed here {}".format(file_path))
+        return file_name
 
     def read_file_data(self, file_type, file_name, headers):
         # self.log("Get {} data file started".format(file_type))
@@ -519,15 +575,16 @@ class SyncLocationsView(BrowserView):
                         ),
                     )
                 else:
+                    firstname = " ".join(row["account_manager1"].split(" ")[:-1])
+                    if len(firstname) == 0:
+                        firstname = "---"
                     surname = row["account_manager1"].split(" ")[-1]
                     contact = api.create(
                         lab_contacts_folder,
                         "LabContact",
                         Surname=surname,
+                        Firstname=firstname,
                     )
-                    firstname = " ".join(row["account_manager1"].split(" ")[:-1])
-                    if len(firstname) > 0:
-                        contact.setFirstname(firstname)
 
                     lab_contacts.append(contact)
                     lab_contact_names.append(contact.getFullname())
