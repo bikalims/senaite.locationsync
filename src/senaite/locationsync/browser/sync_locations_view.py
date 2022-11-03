@@ -2,6 +2,8 @@
 
 import csv
 from DateTime import DateTime
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 import logging
 import os
 from plone.protect.interfaces import IDisableCSRFProtection
@@ -11,16 +13,14 @@ from Products.statusmessages.interfaces import IStatusMessage
 from senaite import api
 from senaite.core import logger
 from senaite.locationsync import _
+from smtplib import SMTPRecipientsRefused
+from smtplib import SMTPServerDisconnected
 import transaction
 from zope.interface import Interface, alsoProvides
 
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-
-# from email.utils import formataddr
-from smtplib import SMTPRecipientsRefused
-from smtplib import SMTPServerDisconnected
-
+EMAIL_SUPER = False
+COMMIT_COUNT = 0
+FORCE_ABORT = True
 CR = "\n"
 ACCOUNT_FILE_NAME = "Account lims.csv"
 LOCATION_FILE_NAME = "location lims.csv"
@@ -119,7 +119,14 @@ class SyncLocationsView(BrowserView):
         log_file_name = self.write_log_file()
 
         # Send email
-        self.send_email(errors, actions, log_file_name)
+        if EMAIL_SUPER:
+            self.send_email(errors, actions, log_file_name)
+        else:
+            logger.info("skip supervisory email requested")
+
+        if FORCE_ABORT:
+            logger.info("Force abort requested")
+            transaction.abort()
 
         # return the concatenated logs
         return CR.join(
@@ -211,7 +218,7 @@ class SyncLocationsView(BrowserView):
             success = False
         return success
 
-    def log(self, message, level="info", action=False):
+    def log(self, message, context="Main", level="info", action=False):
         """Log to logging facility
 
         :param message: Log message
@@ -235,6 +242,7 @@ class SyncLocationsView(BrowserView):
             {
                 "time": timestamp,
                 "level": "{}{}".format(level[0].upper(), level[1:].lower()),
+                "context": context,
                 "action": action,
                 "message": message,
             }
@@ -262,7 +270,8 @@ class SyncLocationsView(BrowserView):
                 len(data["rows"]),
                 file_name,
                 len(data["errors"]),
-            )
+            ),
+            context=file_type,
         )
         if data.get("errors", []):
             return
@@ -276,6 +285,8 @@ class SyncLocationsView(BrowserView):
             self.process_systems_rules(data)
         elif file_type == "Contacts":
             self.process_contacts_rules(data)
+        if COMMIT_COUNT > 0:
+            transaction.commit()
 
     def clean_row(self, row):
         illegal_chars = ["\xef\xbb\xbf"]
@@ -297,10 +308,11 @@ class SyncLocationsView(BrowserView):
 
         with open(file_path, "w") as f:
             writer = csv.writer(f)
-            writer.writerow(["Time", "Action", "Level", "Message"])
+            writer.writerow(["Time", "Context", "Action", "Level", "Message"])
             for log in self.logs:
                 row = [
                     log["time"],
+                    log["context"],
                     log["action"],
                     log["level"],
                     log["message"],
@@ -313,7 +325,9 @@ class SyncLocationsView(BrowserView):
         # self.log("Get {} data file started".format(file_type))
         file_path = "{}/{}".format(self.sync_current_folder, file_name)
         if not os.path.exists(file_path):
-            self.log("{} file not found".format(file_type), level="error")
+            self.log(
+                "{} file not found".format(file_type), context=file_type, level="error"
+            )
             return {"headers": [], "rows": [], "errors": ["FileNotFound"]}
 
         rows = []
@@ -329,20 +343,21 @@ class SyncLocationsView(BrowserView):
                         msg = "File {} has incorrect number of headers: found {}, it must be {}".format(
                             file_name, len(row), len(headers)
                         )
-                        self.log(msg, level="error")
+                        self.log(msg, context=file_type, level="error")
                         errors.append(msg)
                         break
                     if headers != row:
                         msg = "File {} has incorrect headers: found [{}], it must be [{}]".format(
                             file_name, ", ".join(row), ", ".join(headers)
                         )
-                        self.log(msg, level="error")
+                        self.log(msg, context=file_type, level="error")
                         errors.append(msg)
                         break
                     self.log(
-                        "File {} with corrent {} header columns".format(
-                            file_name, len(row)
-                        )
+                        "File {} with correct {} header columns".format(
+                            file_name, len(row), context=file_type
+                        ),
+                        context=file_type,
                     )
                     continue
                 if len(headers) != len(row):
@@ -350,7 +365,7 @@ class SyncLocationsView(BrowserView):
                         file_name, len(row), i, ", ".join(row)
                     )
                     errors.append(msg)
-                    self.log(msg, level="error")
+                    self.log(msg, context=file_type, level="error")
                     continue
                 # Process cells in row
                 adict = {}
@@ -365,6 +380,7 @@ class SyncLocationsView(BrowserView):
                                 row[idx],
                                 headers[idx],
                             ),
+                            context=file_type,
                             level="warn",
                         )
                         val = (
@@ -373,7 +389,7 @@ class SyncLocationsView(BrowserView):
                     adict[headers[idx]] = val
                 rows.append(adict)
                 # self.log("File {} row {}: {}".format(file_name, i, ", ".join(row)))
-        self.log("Read {} data file complete".format(file_type))
+        self.log("Read {} data file complete".format(file_type), context=file_type)
         return {"headers": headers, "rows": rows, "errors": errors}
 
     def _move_file(self, file_name, dest_folder):
@@ -383,17 +399,23 @@ class SyncLocationsView(BrowserView):
             timestamp = DateTime.strftime(DateTime(), "%Y%m%d.%H%M")
             to_file_path = "{}/{}.{}.csv".format(dest_folder, file_name, timestamp)
             os.rename(from_file_path, to_file_path)
-            self.log("Moved file {} to {} folder".format(file_name, dest_folder))
+            self.log(
+                "Moved file {} to {} folder".format(file_name, dest_folder),
+                context="MoveFiles",
+            )
             return
         dest_file_path = "{}/{}".format(dest_folder, file_name)
         if os.path.exists(dest_file_path):
             self.log(
                 "Cannot move file {} because it's already in {} folder".format(
                     file_name, dest_folder
-                )
+                ),
+                context="MoveFiles",
             )
             return
-        self.log("Cannot move file {}".format(file_name), level="error")
+        self.log(
+            "Cannot move file {}".format(file_name), context="MoveFiles", level="error"
+        )
 
     def process_account_rules(self, data):
         portal = api.get_portal()
@@ -403,10 +425,13 @@ class SyncLocationsView(BrowserView):
         client_ids = [c["getClientID"] for c in clients]
         num_rows = len(data["rows"])
         for i, row in enumerate(data["rows"]):
+            if COMMIT_COUNT > 0 and i % COMMIT_COUNT == 0:
+                transaction.commit()
             logger.info("Process row {} of {} from Accounts file".format(i, num_rows))
             if len(row.get("Customer_Number", "")) == 0:
                 self.log(
                     "Row {} of Account file has no Customer_Number value".format(i),
+                    context="Accounts",
                     level="error",
                 )
                 continue
@@ -420,12 +445,14 @@ class SyncLocationsView(BrowserView):
                 if row["Inactive"] == "1" or row["On_HOLD"] == "1":
                     if current_state == "inactive":
                         self.log(
-                            "Client {} already inactive".format(row["Account_name"])
+                            "Client {} already inactive".format(row["Account_name"]),
+                            context="Accounts",
                         )
                     else:
                         api.do_transition_for(client, "deactivate")
                         self.log(
                             "Deactivated Client {}".format(row["Account_name"]),
+                            context="Accounts",
                             action="Deactivated",
                         )
                 else:
@@ -434,6 +461,7 @@ class SyncLocationsView(BrowserView):
                         api.do_transition_for(client, "activate")
                         self.log(
                             "Activated Client {}".format(row["Account_name"]),
+                            context="Accounts",
                             action="Activated",
                         )
                     if client.Title != row["Account_name"]:
@@ -442,6 +470,7 @@ class SyncLocationsView(BrowserView):
                             "Rename Client '{}' title to {}".format(
                                 client.Title(), row["Account_name"]
                             ),
+                            context="Accounts",
                             action="Renamed",
                         )
                         client.setTitle(row["Account_name"])
@@ -456,7 +485,9 @@ class SyncLocationsView(BrowserView):
                 )
 
                 self.log(
-                    "Created Client {}".format(row["Account_name"]), action="Created"
+                    "Created Client {}".format(row["Account_name"]),
+                    action="Created",
+                    context="Accounts",
                 )
                 if row["Inactive"] == "1" or row["On_HOLD"] == "1":
                     api.do_transition_for(client, "deactivate")
@@ -464,6 +495,7 @@ class SyncLocationsView(BrowserView):
                         "Deactivate newly created client {}".format(
                             row["Account_name"]
                         ),
+                        context="Accounts",
                         action="Deactivated",
                     )
         return True
@@ -484,17 +516,21 @@ class SyncLocationsView(BrowserView):
         client_ids = [c["getClientID"] for c in clients]
         num_rows = len(data["rows"])
         for i, row in enumerate(data["rows"]):
+            if COMMIT_COUNT > 0 and i % COMMIT_COUNT == 0:
+                transaction.commit()
             logger.info("Process row {} of {} from Locations file".format(i, num_rows))
             # field validation - required fields
             if len(row.get("Customer_Number", "")) == 0:
                 self.log(
                     "Row {} of Locations file has no Customer_Number value".format(i),
+                    context="Locations",
                     level="error",
                 )
                 continue
             if len(row.get("Locations_id", "")) == 0:
                 self.log(
                     "Row {} of Locations file has no Locations_id value".format(i),
+                    context="Locations",
                     level="error",
                 )
                 continue
@@ -504,6 +540,7 @@ class SyncLocationsView(BrowserView):
                     "Client ID {} on row {} of the locations file was not found in DB".format(
                         row["Customer_Number"], i
                     ),
+                    context="Locations",
                     level="error",
                 )
                 # TODO notify lab admin
@@ -511,7 +548,7 @@ class SyncLocationsView(BrowserView):
             client = [c for c in clients if row["Customer_Number"] == c["getClientID"]][
                 0
             ]
-            self.log("Found Client {}".format(client.Title))
+            self.log("Found Client {}".format(client.Title), context="Locations")
             locations = api.search(
                 {
                     "portal_type": "SamplePointLocation",
@@ -531,7 +568,9 @@ class SyncLocationsView(BrowserView):
                 # If row['HOLD'] or row['Cancel_Box'], see code below
                 # If row['account_manager1'], see code below
                 # For address field in row, see code below
-                self.log("Found location {}".format(row["Locations_id"]))
+                self.log(
+                    "Found location {}".format(row["Locations_id"]), context="Locations"
+                )
             else:
                 # Location does NOT exist
                 client_obj = api.get_object(client)
@@ -546,6 +585,7 @@ class SyncLocationsView(BrowserView):
                     "Created location {} in Client {}".format(
                         location.Title(), client.Title
                     ),
+                    context="Locations",
                     action="Created",
                 )
             # Rules for if location existed or has just been created
@@ -558,6 +598,7 @@ class SyncLocationsView(BrowserView):
                         "Location {} in Client {} has been deactivated".format(
                             location.Title(), client.Title
                         ),
+                        context="Locations",
                         action="Deactivated",
                     )
                 for system in location.values():
@@ -568,6 +609,7 @@ class SyncLocationsView(BrowserView):
                             "System {} in Location {} in Client {} has been deactivated".format(
                                 system.Title(), location.Title(), client.Title
                             ),
+                            context="Locations",
                             action="Deactivated",
                         )
             if row["account_manager1"]:
@@ -600,6 +642,7 @@ class SyncLocationsView(BrowserView):
                         "Created a Lab Contact {} for location {} and client {}".format(
                             contact.getFullname(), location.Title(), client.Title
                         ),
+                        context="Locations",
                         action="Created",
                     )
                     # TODO Notify lab admin that new lab contact created with no email
@@ -621,6 +664,7 @@ class SyncLocationsView(BrowserView):
                         "Added Lab Contact {} to location {} and client {}".format(
                             contact.getFullname(), location.Title(), client.Title
                         ),
+                        context="Locations",
                         action="Added",
                     )
                 # Get address from row and update location, new or old
@@ -635,6 +679,8 @@ class SyncLocationsView(BrowserView):
         location_ids = [l.get_system_location_id() for l in locations]
         num_rows = len(data["rows"])
         for i, row in enumerate(data["rows"]):
+            if COMMIT_COUNT > 0 and i % COMMIT_COUNT == 0:
+                transaction.commit()
             logger.info("Process row {} of {} from Systems file".format(i, num_rows))
             if len(row.get("SystemID", "")) == 0:
                 self.log(
@@ -643,6 +689,7 @@ class SyncLocationsView(BrowserView):
                         row.get("system_name", "missing"),
                         row.get("Location_id", "missing"),
                     ),
+                    context="Systems",
                     level="error",
                 )
                 continue
@@ -650,13 +697,13 @@ class SyncLocationsView(BrowserView):
                 msg = "Location {} on row {} in systems file not found in DB".format(
                     row["Location_id"], i
                 )
-                self.log(msg, level="error")
+                self.log(msg, level="error", context="Systems")
                 # TODO Notify lab admin location not found
                 continue
             location = [
                 l for l in locations if row["Location_id"] == l.get_system_location_id()
             ][0]
-            self.log("Found Location {}".format(row["Location_id"]))
+            self.log("Found Location {}".format(row["Location_id"]), context="Systems")
             # TODO is location id in catalog?
             systems = api.search(
                 {
@@ -675,7 +722,8 @@ class SyncLocationsView(BrowserView):
                 self.log(
                     "Found System {} with ID {} in Location {}".format(
                         system.Title(), row["SystemID"], location.Title()
-                    )
+                    ),
+                    context="Systems",
                 )
                 if row["Inactive_Retired_Flag"] == "1":
                     if api.get_workflow_status_of(system) == "active":
@@ -683,6 +731,7 @@ class SyncLocationsView(BrowserView):
                             "Deactivate System {} in location {} beacuse it's marked as Inactive_Retired_Flag".format(
                                 row["system_name"], location.Title()
                             ),
+                            context="Systems",
                             action="Deactivated",
                         )
                         api.do_transition_for(system, "deactivate")
@@ -692,7 +741,8 @@ class SyncLocationsView(BrowserView):
                     self.log(
                         "System {} in location {} doesn't exists but is marked as Inactive_Retired_Flag".format(
                             row["system_name"], location.Title()
-                        )
+                        ),
+                        context="Systems",
                     )
                     continue
                 location = api.get_object(location)
@@ -707,6 +757,7 @@ class SyncLocationsView(BrowserView):
                     "Created system {} in location {} in client {}".format(
                         system.Title(), location.Title(), client_title
                     ),
+                    context="Systems",
                     action="Created",
                 )
             # Update equipment details regardless of new ot old, active or not
@@ -722,12 +773,15 @@ class SyncLocationsView(BrowserView):
         location_ids = [l.get_system_location_id() for l in locations]
         num_rows = len(data["rows"])
         for i, row in enumerate(data["rows"]):
+            if COMMIT_COUNT > 0 and i % COMMIT_COUNT == 0:
+                transaction.commit()
             logger.info("Process row {} of {} from Contacts file".format(i, num_rows))
             if len(row.get("contactID", "")) == 0:
                 self.log(
                     "Contact on row {} in location {} has no contactID field".format(
                         i, row.get("Locations_id", "missing")
                     ),
+                    context="Contacts",
                     level="error",
                 )
                 continue
@@ -736,6 +790,7 @@ class SyncLocationsView(BrowserView):
                     "Contact on row {} with contactID {} has no Locations_id field".format(
                         i, row.get("contactID", "missing")
                     ),
+                    context="Contacts",
                     level="error",
                 )
                 continue
@@ -743,10 +798,12 @@ class SyncLocationsView(BrowserView):
                 msg = "Location {} on row {} in contacts file not found in DB".format(
                     row["Locations_id"], i
                 )
-                self.log(msg, level="error")
+                self.log(msg, level="error", context="Contacts")
                 continue
 
-            self.log("Found Location {}".format(row["Locations_id"]))
+            self.log(
+                "Found Location {}".format(row["Locations_id"]), context="Contacts"
+            )
             location = [
                 l
                 for l in locations
@@ -766,7 +823,8 @@ class SyncLocationsView(BrowserView):
                 self.log(
                     "Found contact {} in location {}".format(
                         row["contactID"], location.Title()
-                    )
+                    ),
+                    context="Contacts",
                 )
                 # TODO more processing here
                 continue
@@ -781,6 +839,7 @@ class SyncLocationsView(BrowserView):
                     "Created contact {} for location {} in client {}".format(
                         contact.ContactId, location.Title(), client.Title()
                     ),
+                    context="Contacts",
                     action="Created",
                 )
             # TODO Ensure email is correct
@@ -789,6 +848,7 @@ class SyncLocationsView(BrowserView):
                 "Added contact {} to location {} in client {}".format(
                     contact.Title(), location.Title(), client.Title()
                 ),
+                context="Contacts",
                 action="Added",
             )
         return True
@@ -812,6 +872,7 @@ class SyncLocationsView(BrowserView):
                 "Unknown state abbreviation {} on row {} of the locations file".format(
                     state, row_num
                 ),
+                context="Locations",
                 level="warn",
             )
             div1 = state
@@ -828,34 +889,32 @@ class SyncLocationsView(BrowserView):
         }
         return address
 
-    def _create_client(self, context, number, title, row_num):
-        try:
-            client = api.create(context, "Client", ClientID=number, title=title)
-            return client
-        except UnicodeDecodeError as e:
-            title = title.decode("utf-8", "replace").replace(u"\ufffd", " ")
-            try:
-                client = api.create(context, "Client", ClientID=number, title=title)
-                self.log(
-                    "Failed creating Customer with Number {} and Name {} on row {} because of decoding error {} but managed to recover by replace offending characters with spaces".format(
-                        number, title, row_num, e
-                    ),
-                    level="warn",
-                )
-                return client
-            except Exception as e:
-                self.log(
-                    "Failed creating Customer with Number {} and Name {} on row {} because of error {}".format(
-                        number, title, row_num, e
-                    ),
-                    level="error",
-                )
-                return None
-        except Exception as e:
-            self.log(
-                "Failed creating Customer with Number {} and Name {} on row {} because of error {}".format(
-                    number, title, row_num, e
-                ),
-                level="error",
-            )
-            return None
+    def create(self, container, portal_type, *args, **kwargs):
+        from bika.lims.utils import tmpID
+
+        # from zope.component import getUtility
+        # from zope.event import notify
+        # from zope.lifecycleevent import ObjectCreatedEvent
+        from Products.CMFPlone.utils import _createObjectByType
+
+        # from zope.lifecycleevent import modified
+        # from zope.component.interfaces import IFactory
+
+        if kwargs.get("title") is None:
+            kwargs["title"] = "New {}".format(portal_type)
+
+        # generate a temporary ID
+        tmp_id = tmpID()
+
+        obj = _createObjectByType(portal_type, container, tmp_id)
+
+        # # handle AT Content
+        # if is_at_content(obj):
+        #     obj.processForm()
+
+        # Edit after processForm; processForm does AT unmarkCreationFlag.
+        obj.edit(**kwargs)
+
+        # # explicit notification
+        # modified(obj)
+        return obj
