@@ -13,6 +13,7 @@
         <tal:loop tal:repeat="file data/files">
           <p><a tal:attributes="href file/url" tal:content="file/name"/></p>
         </tal:loop>
+        <button tal:condition="data/limit" class="btn-sm btn-outline-secondary"><a tal:attributes="href python:'{}/log_file_view?all=true'.format(here.absolute_url())" >Show All</a></button>
       </div>
 
   </metal:block>

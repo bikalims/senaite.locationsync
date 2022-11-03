@@ -22,6 +22,9 @@ class LogFileView(BrowserView):
         return self.index()
 
     def get_data(self):
+        limit = 15
+        if self.request.form and self.request.form.get("all"):
+            limit = 0
         base_folder = api.get_registry_record(
             "senaite.locationsync.location_sync_control_panel.sync_base_folder"
         )
@@ -36,6 +39,8 @@ class LogFileView(BrowserView):
             if os.path.exists(path):
                 listing = glob.glob(path + "/*")
                 listing.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+                if limit != 0:
+                    listing = listing[:limit]
                 listing = [f.split("/")[-1] for f in listing]
                 site_name = self.context.getPhysicalPath()[1]
                 if site_name not in self.context.absolute_url():
@@ -53,7 +58,7 @@ class LogFileView(BrowserView):
 
                     files.append(file_dict)
         logger.info("get_data: return {}".format(files))
-        return {"files": files}
+        return {"files": files, "limit": limit}
 
     def get_log_file(self):
         form = self.request.form
