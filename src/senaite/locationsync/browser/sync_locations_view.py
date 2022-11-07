@@ -18,9 +18,10 @@ from smtplib import SMTPServerDisconnected
 import transaction
 from zope.interface import Interface, alsoProvides
 
-EMAIL_SUPER = False
-COMMIT_COUNT = 0
-FORCE_ABORT = True
+EMAIL_SUPER = True
+COMMIT_COUNT = 100
+FORCE_ABORT = False
+
 CR = "\n"
 ACCOUNT_FILE_NAME = "Account lims.csv"
 LOCATION_FILE_NAME = "location lims.csv"
@@ -629,12 +630,23 @@ class SyncLocationsView(BrowserView):
                     if len(firstname) == 0:
                         firstname = "---"
                     surname = row["account_manager1"].split(" ")[-1]
-                    contact = api.create(
-                        lab_contacts_folder,
-                        "LabContact",
-                        Surname=surname,
-                        Firstname=firstname,
-                    )
+                    try:
+                        contact = api.create(
+                            lab_contacts_folder,
+                            "LabContact",
+                            Surname=surname,
+                            Firstname=firstname,
+                        )
+                    except Exception:
+                        self.log(
+                            "Failed creating Lab Contact {} for location {} and client {}".format(
+                                contact.getFullname(), location.Title(), client.Title
+                            ),
+                            context="Locations",
+                            level="error",
+                            action="ReportToSysAdmin",
+                        )
+                        continue
 
                     lab_contacts.append(contact)
                     lab_contact_names.append(contact.getFullname())
