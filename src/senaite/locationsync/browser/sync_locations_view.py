@@ -19,7 +19,7 @@ import transaction
 from zope.interface import Interface, alsoProvides
 
 EMAIL_SUPER = True
-COMMIT_COUNT = 100
+COMMIT_COUNT = 1000
 FORCE_ABORT = False
 
 CR = "\n"
@@ -76,6 +76,11 @@ class SyncLocationsView(BrowserView):
         self.sync_logs_folder = "{}/logs".format(self.sync_base_folder)
 
     def __call__(self):
+        if EMAIL_SUPER and not self.supervisor_exists():
+            msg = "Laboratory has no supervisor to email the results to. Assign one and try again"
+            IStatusMessage(self.request).addStatusMessage(_(msg), "error")
+            self.request.response.redirect(self.context.absolute_url())
+            return
         no_abort = self.request.form.get("no-abort") is not None
         logger.info("SyncLocationsView: no_abort = {}".format(no_abort))
         if (
@@ -137,11 +142,19 @@ class SyncLocationsView(BrowserView):
             ]
         )
 
-    def send_email(self, errors, actions, log_file_name):
+    def supervisor_exists(self):
         lab = api.get_setup().laboratory
         supervisor = lab.getSupervisor()
-        if not supervisor:
-            raise RuntimeError("Lab has no supervisor")
+        if supervisor:
+            return True
+        else:
+            return False
+
+    def send_email(self, errors, actions, log_file_name):
+        if not self.supervisor_exists():
+            return
+        lab = api.get_setup().laboratory
+        supervisor = lab.getSupervisor()
         name = safe_unicode(supervisor.getFullname()).encode("utf-8")
         email = safe_unicode(lab.getEmailAddress()).encode("utf-8")
         timestamp = DateTime.strftime(DateTime(), "%Y-%m-%d %H:%M")
@@ -362,11 +375,12 @@ class SyncLocationsView(BrowserView):
                     )
                     continue
                 if len(headers) != len(row):
-                    msg = "File {} incorrect number of columns {} in row {}: {}".format(
-                        file_name, len(row), i, ", ".join(row)
+                    msg = "File {} incorrect number of columns {} in row {}".format(
+                        file_name,
+                        len(row),
+                        i,
                     )
                     errors.append(msg)
-                    self.log(msg, context=file_type, level="error")
                     continue
                 # Process cells in row
                 adict = {}
@@ -544,7 +558,6 @@ class SyncLocationsView(BrowserView):
                     context="Locations",
                     level="error",
                 )
-                # TODO notify lab admin
                 continue
             client = [c for c in clients if row["Customer_Number"] == c["getClientID"]][
                 0
