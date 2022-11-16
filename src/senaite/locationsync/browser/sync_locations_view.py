@@ -19,8 +19,8 @@ import transaction
 from zope.interface import Interface, alsoProvides
 
 EMAIL_SUPER = True
-COMMIT_COUNT = 1000
-FORCE_ABORT = False
+COMMIT_COUNT = 1
+FORCE_ABORT = True
 
 CR = "\n"
 ACCOUNT_FILE_NAME = "Account lims.csv"
@@ -101,10 +101,12 @@ class SyncLocationsView(BrowserView):
         alsoProvides(self.request, IDisableCSRFProtection)
         self.sync_locations()
         errors = [l for l in self.logs if l["level"].lower() == "error"]
-        actions = [l for l in self.logs if l["action"]]
-
+        actions = [l for l in self.logs if l["action"] != "Info"]
+        additions = [l for l in actions if l["action"] == "Added"]
         self.log(
-            "Stats: found {} errors and {} actions".format(len(errors), len(actions))
+            "Stats: found {} errors and {} actions ({} additions)".format(
+                len(errors), len(actions), len(additions)
+            )
         )
         # Move data files
         if len(errors) == 0:
@@ -290,7 +292,7 @@ class SyncLocationsView(BrowserView):
         if data.get("errors", []):
             return
 
-        # TODO Process Rules
+        # Process Rules
         if file_type == "Accounts":
             self.process_account_rules(data)
         elif file_type == "Locations":
@@ -303,14 +305,19 @@ class SyncLocationsView(BrowserView):
             transaction.commit()
 
     def clean_row(self, row):
-        illegal_chars = ["\xef\xbb\xbf"]
+        illegal_chars = ["\xef\xbb\xbf", "\xa0", u"\u2019"]
         cleaned = []
         for cell in row:
             cell = cell.strip()
-            for char in illegal_chars:
-                if char in cell:
-                    cell = cell.replace(char, "")
-            cleaned.append(cell)
+            cell = safe_unicode(cell).encode("utf-8")
+            new = ""
+            for char in cell:
+                if ord(char) > 128:
+                    continue
+                if char in illegal_chars:
+                    continue
+                new += char
+            cleaned.append(new)
         return cleaned
 
     def write_log_file(self):
@@ -524,7 +531,7 @@ class SyncLocationsView(BrowserView):
         lab_contacts = []
         for contact in lab_contacts_folder.values():
             lab_contacts.append(contact)
-            lab_contact_names.append(contact.getFullname())
+            lab_contact_names.append(contact.Title())
 
         # Prep clients
         clients = api.search({"portal_type": "Client"})
@@ -567,18 +574,13 @@ class SyncLocationsView(BrowserView):
                 {
                     "portal_type": "SamplePointLocation",
                     "query": {"path": client.getPath()},
+                    "getSamplePointLocationID": row["Locations_id"],
                 }
             )
-            # TODO add location ID to catalog and use it here
-            locations = [api.get_object(l) for l in locations]
-            location_ids = [l.system_location_id for l in locations]
-            if row["Locations_id"] in location_ids:
+            location = None
+            if locations:
                 # Location exists
-                location = [
-                    l
-                    for l in locations
-                    if row["Locations_id"] == l.get_system_location_id()
-                ][0]
+                location_brain = locations[0]
                 # If row['HOLD'] or row['Cancel_Box'], see code below
                 # If row['account_manager1'], see code below
                 # For address field in row, see code below
@@ -593,8 +595,9 @@ class SyncLocationsView(BrowserView):
                     client_obj,
                     "SamplePointLocation",
                     title=title,
+                    # sample_point_location_id=row["Locations_id"],
                 )
-                location.set_system_location_id(row["Locations_id"])
+                location.setSamplePointLocationID(row["Locations_id"])
                 self.log(
                     "Created location {} in Client {}".format(
                         location.Title(), client.Title
@@ -602,26 +605,41 @@ class SyncLocationsView(BrowserView):
                     context="Locations",
                     action="Created",
                 )
+                location_brain = api.search(
+                    {
+                        "portal_type": "SamplePointLocation",
+                        "query": {"path": "/".join(location.getPhysicalPath())},
+                    }
+                )[0]
+
             # Rules for if location existed or has just been created
             if row["HOLD"] == "1" or row["Cancel_Box"] == "1":
                 # deactivate location and children
-                current_state = api.get_workflow_status_of(location)
+                current_state = location_brain.review_state
                 if current_state == "active":
+                    if location is None:
+                        location = api.get_object(location_brain)
                     api.do_transition_for(location, "deactivate")
                     self.log(
                         "Location {} in Client {} has been deactivated".format(
-                            location.Title(), client.Title
+                            location_brain.Title, client.Title
                         ),
                         context="Locations",
                         action="Deactivated",
                     )
-                for system in location.values():
-                    current_state = api.get_workflow_status_of(system)
-                    if current_state == "active":
+                systems = api.search(
+                    {
+                        "portal_type": "SamplePoint",
+                        "query": {"path": location_brain.getPath()},
+                    }
+                )
+                for system in systems:
+                    if system.review_state == "active":
+                        system = api.get_object(system)
                         api.do_transition_for(system, "deactivate")
                         self.log(
                             "System {} in Location {} in Client {} has been deactivated".format(
-                                system.Title(), location.Title(), client.Title
+                                system.Title(), location_brain.Title, client.Title
                             ),
                             context="Locations",
                             action="Deactivated",
@@ -629,13 +647,11 @@ class SyncLocationsView(BrowserView):
             if row["account_manager1"]:
                 if row["account_manager1"] in lab_contact_names:
                     contact = [
-                        c
-                        for c in lab_contacts
-                        if row["account_manager1"] == c.getFullname()
+                        c for c in lab_contacts if row["account_manager1"] == c.Title()
                     ][0]
                     self.log(
                         "Found lab contact {} for Location {}".format(
-                            contact.getFullname(), location.Title()
+                            contact.Title(), location_brain.Title
                         ),
                     )
                 else:
@@ -653,7 +669,9 @@ class SyncLocationsView(BrowserView):
                     except Exception:
                         self.log(
                             "Failed creating Lab Contact {} for location {} and client {}".format(
-                                contact.getFullname(), location.Title(), client.Title
+                                contact.Title(),
+                                location_brain.Title,
+                                client.Title,
                             ),
                             context="Locations",
                             level="error",
@@ -662,46 +680,50 @@ class SyncLocationsView(BrowserView):
                         continue
 
                     lab_contacts.append(contact)
-                    lab_contact_names.append(contact.getFullname())
+                    lab_contact_names.append(contact.Title())
                     self.log(
                         "Created a Lab Contact {} for location {} and client {}".format(
-                            contact.getFullname(), location.Title(), client.Title
+                            contact.Title(), location_brain.Title, client.Title
                         ),
                         context="Locations",
                         action="Created",
                     )
                     # TODO Notify lab admin that new lab contact created with no email
-                contacts = location.get_account_managers()
-                if (
-                    len(
-                        [
-                            c
-                            for c in contacts
-                            if c.getFullname() == contact.getFullname()
-                        ]
-                    )
-                    == 0
-                ):
-                    # Added to location acccount managers if not already in there
-                    contacts.append(contact)
-                    location.set_account_managers(contacts)
+                contacts = location_brain.getAccountManagers
+                if contacts is None:
+                    contacts = []
+                if contact.UID() not in contacts:
+                    contacts.append(contact.UID())
+                    if location is None:
+                        location = api.get_object(location_brain)
+                    location.setAccountManagers(contacts)
                     self.log(
                         "Added Lab Contact {} to location {} and client {}".format(
-                            contact.getFullname(), location.Title(), client.Title
+                            contact.Title(), location_brain.Title, client.Title
                         ),
                         context="Locations",
                         action="Added",
                     )
                 # Get address from row and update location, new or old
                 address = self._get_address_field(row, row_num=i)
-                location.address = [address]
+                if address:
+                    if location is None:
+                        location = api.get_object(location_brain)
+                    if [address] != location.getAddress():
+                        location.setAddress([address])
+                        self.log(
+                            "Added Address to location {} and client {}".format(
+                                location_brain.Title, client.Title
+                            ),
+                            context="Locations",
+                            action="Added",
+                        )
 
         return True
 
     def process_systems_rules(self, data):
         locations = api.search({"portal_type": "SamplePointLocation"})
-        locations = [api.get_object(l) for l in locations]
-        location_ids = [l.get_system_location_id() for l in locations]
+        location_ids = [l.getSamplePointLocationID for l in locations]
         num_rows = len(data["rows"])
         for i, row in enumerate(data["rows"]):
             if COMMIT_COUNT > 0 and i % COMMIT_COUNT == 0:
@@ -723,19 +745,20 @@ class SyncLocationsView(BrowserView):
                     row["Location_id"], i
                 )
                 self.log(msg, level="error", context="Systems")
-                # TODO Notify lab admin location not found
                 continue
-            location = [
-                l for l in locations if row["Location_id"] == l.get_system_location_id()
+            location = None
+            location_brain = [
+                l for l in locations if row["Location_id"] == l.getSamplePointLocationID
             ][0]
             self.log("Found Location {}".format(row["Location_id"]), context="Systems")
             # TODO is location id in catalog?
             systems = api.search(
                 {
                     "portal_type": "SamplePoint",
-                    "query": {"path": "/".join(location.getPhysicalPath())},
+                    "query": {"path": location_brain.getPath()},
                 }
             )
+            # TODO
             systems = [api.get_object(s) for s in systems]
             system = None
             for sys in systems:
@@ -746,7 +769,7 @@ class SyncLocationsView(BrowserView):
             if system is not None:
                 self.log(
                     "Found System {} with ID {} in Location {}".format(
-                        system.Title(), row["SystemID"], location.Title()
+                        system.Title(), row["SystemID"], location_brain.Title
                     ),
                     context="Systems",
                 )
@@ -754,7 +777,7 @@ class SyncLocationsView(BrowserView):
                     if api.get_workflow_status_of(system) == "active":
                         self.log(
                             "Deactivate System {} in location {} beacuse it's marked as Inactive_Retired_Flag".format(
-                                row["system_name"], location.Title()
+                                row["system_name"], location_brain.Title
                             ),
                             context="Systems",
                             action="Deactivated",
@@ -765,12 +788,13 @@ class SyncLocationsView(BrowserView):
                 if row["Inactive_Retired_Flag"] == "1":
                     self.log(
                         "System {} in location {} doesn't exists but is marked as Inactive_Retired_Flag".format(
-                            row["system_name"], location.Title()
+                            row["system_name"], location_brain.Title
                         ),
                         context="Systems",
                     )
                     continue
-                location = api.get_object(location)
+                if location is None:
+                    location = api.get_object(location_brain)
                 system = api.create(
                     location,
                     "SamplePoint",
@@ -780,22 +804,25 @@ class SyncLocationsView(BrowserView):
                 client_title = location.aq_parent.Title()
                 self.log(
                     "Created system {} in location {} in client {}".format(
-                        system.Title(), location.Title(), client_title
+                        system.Title(), location_brain.Title, client_title
                     ),
                     context="Systems",
                     action="Created",
                 )
-            # Update equipment details regardless of new ot old, active or not
-            system.EquipmentID = row["Equipment_ID"]
-            system.EquipmentType = row["system"]
-            system.EquipmentDescription = row["Equipment_Description2"]
+            # Update equipment details if diff
+            if system.EquipmentID != row["Equipment_ID"]:
+                system.EquipmentID = row["Equipment_ID"]
+            if system.EquipmentType != row["system"]:
+                system.EquipmentType = row["system"]
+            if system.EquipmentDescription != row["Equipment_Description2"]:
+                system.EquipmentDescription = row["Equipment_Description2"]
 
         return True
 
     def process_contacts_rules(self, data):
         locations = api.search({"portal_type": "SamplePointLocation"})
         locations = [api.get_object(l) for l in locations]
-        location_ids = [l.get_system_location_id() for l in locations]
+        location_ids = [l.getSamplePointLocationID() for l in locations]
         num_rows = len(data["rows"])
         for i, row in enumerate(data["rows"]):
             if COMMIT_COUNT > 0 and i % COMMIT_COUNT == 0:
@@ -832,7 +859,7 @@ class SyncLocationsView(BrowserView):
             location = [
                 l
                 for l in locations
-                if row["Locations_id"] == l.get_system_location_id()
+                if row["Locations_id"] == l.getSamplePointLocationID()
             ][0]
             location = api.get_object(location)
             client = location.aq_parent
@@ -851,7 +878,6 @@ class SyncLocationsView(BrowserView):
                     ),
                     context="Contacts",
                 )
-                # TODO more processing here
                 continue
             else:
                 contact = api.create(
