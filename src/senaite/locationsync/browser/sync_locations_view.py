@@ -4,6 +4,7 @@ import csv
 from DateTime import DateTime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+import json
 import logging
 import os
 from plone.protect.interfaces import IDisableCSRFProtection
@@ -19,8 +20,9 @@ import transaction
 from zope.interface import Interface, alsoProvides
 
 EMAIL_SUPER = True
-COMMIT_COUNT = 1
-FORCE_ABORT = True
+COMMIT_COUNT = 100
+FORCE_ABORT = False
+SETUP_RUN = True
 
 CR = "\n"
 ACCOUNT_FILE_NAME = "Account lims.csv"
@@ -103,6 +105,7 @@ class SyncLocationsView(BrowserView):
         errors = [l for l in self.logs if l["level"].lower() == "error"]
         actions = [l for l in self.logs if l["action"] != "Info"]
         additions = [l for l in actions if l["action"] == "Added"]
+        print(json.dumps(actions, indent=2))
         self.log(
             "Stats: found {} errors and {} actions ({} additions)".format(
                 len(errors), len(actions), len(additions)
@@ -457,6 +460,15 @@ class SyncLocationsView(BrowserView):
                     level="error",
                 )
                 continue
+            if SETUP_RUN and (row["Inactive"] == "1" or row["On_HOLD"] == "1"):
+                self.log(
+                    "Row {} of Contact file is inactive so has been ignored in this setup run".format(
+                        i
+                    ),
+                    context="Locations",
+                    level="info",
+                )
+                continue
             if row["Customer_Number"] in client_ids:
                 # Client Already Exists
                 client = [
@@ -541,6 +553,15 @@ class SyncLocationsView(BrowserView):
             if COMMIT_COUNT > 0 and i % COMMIT_COUNT == 0:
                 transaction.commit()
             logger.info("Process row {} of {} from Locations file".format(i, num_rows))
+            if SETUP_RUN and (row["HOLD"] == "1" or row["Cancel_Box"] == "1"):
+                self.log(
+                    "Row {} of Locations file is on hold so has been ignored in this setup run".format(
+                        i
+                    ),
+                    context="Locations",
+                    level="info",
+                )
+                continue
             # field validation - required fields
             if len(row.get("Customer_Number", "")) == 0:
                 self.log(
@@ -573,7 +594,7 @@ class SyncLocationsView(BrowserView):
             locations = api.search(
                 {
                     "portal_type": "SamplePointLocation",
-                    "query": {"path": client.getPath()},
+                    "path": {"query": client.getPath()},
                     "getSamplePointLocationID": row["Locations_id"],
                 }
             )
@@ -608,7 +629,7 @@ class SyncLocationsView(BrowserView):
                 location_brain = api.search(
                     {
                         "portal_type": "SamplePointLocation",
-                        "query": {"path": "/".join(location.getPhysicalPath())},
+                        "path": {"query": "/".join(location.getPhysicalPath())},
                     }
                 )[0]
 
@@ -630,7 +651,7 @@ class SyncLocationsView(BrowserView):
                 systems = api.search(
                     {
                         "portal_type": "SamplePoint",
-                        "query": {"path": location_brain.getPath()},
+                        "path": {"query": location_brain.getPath()},
                     }
                 )
                 for system in systems:
@@ -729,6 +750,16 @@ class SyncLocationsView(BrowserView):
             if COMMIT_COUNT > 0 and i % COMMIT_COUNT == 0:
                 transaction.commit()
             logger.info("Process row {} of {} from Systems file".format(i, num_rows))
+            if SETUP_RUN and row["Inactive_Retired_Flag"] == "1":
+                self.log(
+                    "Row {} of System file is on hold so has been ignored in this setup run".format(
+                        i
+                    ),
+                    context="Locations",
+                    level="info",
+                )
+                continue
+            # field validation - required fields
             if len(row.get("SystemID", "")) == 0:
                 self.log(
                     "System on row {} with name {} in location {} has no SystemID field".format(
@@ -755,18 +786,13 @@ class SyncLocationsView(BrowserView):
             systems = api.search(
                 {
                     "portal_type": "SamplePoint",
-                    "query": {"path": location_brain.getPath()},
+                    "path": {"query": location_brain.getPath()},
+                    "getSamplePointID": row["SystemID"],
                 }
             )
-            # TODO
-            systems = [api.get_object(s) for s in systems]
-            system = None
-            for sys in systems:
-                if hasattr(sys, "SystemId"):
-                    if sys.SystemId == row["SystemID"]:
-                        system = sys
-                        break
-            if system is not None:
+            reindex = False
+            if len(systems) > 0:
+                system = api.get_object(systems[0])
                 self.log(
                     "Found System {} with ID {} in Location {}".format(
                         system.Title(), row["SystemID"], location_brain.Title
@@ -800,7 +826,8 @@ class SyncLocationsView(BrowserView):
                     "SamplePoint",
                     title=row["system_name"],
                 )
-                system.SystemId = row["SystemID"]
+                system.SamplePointId = row["SystemID"]
+                reindex = True
                 client_title = location.aq_parent.Title()
                 self.log(
                     "Created system {} in location {} in client {}".format(
@@ -809,13 +836,17 @@ class SyncLocationsView(BrowserView):
                     context="Systems",
                     action="Created",
                 )
-            # Update equipment details if diff
             if system.EquipmentID != row["Equipment_ID"]:
                 system.EquipmentID = row["Equipment_ID"]
+                reindex = True
             if system.EquipmentType != row["system"]:
+                reindex = True
                 system.EquipmentType = row["system"]
             if system.EquipmentDescription != row["Equipment_Description2"]:
+                reindex = True
                 system.EquipmentDescription = row["Equipment_Description2"]
+            if reindex:
+                system.reindexObject()
 
         return True
 
