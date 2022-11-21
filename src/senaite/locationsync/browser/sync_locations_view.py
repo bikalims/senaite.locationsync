@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+from bika.lims.api.mail import compose_email
+from bika.lims.api.mail import send_email
 import csv
 from DateTime import DateTime
 from email.mime.multipart import MIMEMultipart
@@ -131,7 +133,7 @@ class SyncLocationsView(BrowserView):
 
         # Send email
         if EMAIL_SUPER:
-            self.send_email(errors, actions, log_file_name)
+            self.email_logs(errors, actions, log_file_name)
         else:
             logger.info("skip supervisory email requested")
 
@@ -155,13 +157,13 @@ class SyncLocationsView(BrowserView):
         else:
             return False
 
-    def send_email(self, errors, actions, log_file_name):
+    def email_logs(self, errors, actions, log_file_name):
         if not self.supervisor_exists():
             return
         lab = api.get_setup().laboratory
         supervisor = lab.getSupervisor()
-        name = safe_unicode(supervisor.getFullname()).encode("utf-8")
-        email = safe_unicode(lab.getEmailAddress()).encode("utf-8")
+        super_name = safe_unicode(supervisor.getFullname()).encode("utf-8")
+        super_email = safe_unicode(lab.getEmailAddress()).encode("utf-8")
         timestamp = DateTime.strftime(DateTime(), "%Y-%m-%d %H:%M")
         # site_name = self.context.getPhysicalPath()[1]
         # if site_name not in self.context.absolute_url():
@@ -171,7 +173,7 @@ class SyncLocationsView(BrowserView):
         )
         # if site_name is not None:
         #     file_url = "/{}/@@get_log_file?name={}".format(site_name, log_file_name)
-        html = """
+        email_body = """
         Hi {},
 
         The location syncronization run completed at {} with {} errors.
@@ -179,25 +181,19 @@ class SyncLocationsView(BrowserView):
 
         Regards,
         """.format(
-            name, timestamp, len(errors), file_url
+            super_name, timestamp, len(errors), file_url
         )
-        html = safe_unicode(html).encode("utf-8")
-        mime_msg = MIMEMultipart("related")
-        mime_msg["Subject"] = "Location syncronization results"
-        mime_msg["From"] = "%s (%s)" % (name, email)
-        mime_msg["To"] = "%s (%s)" % (name, email)
-        mime_msg.preamble = "This is a multi-part MIME message."
-        msg_txt = MIMEText(html, _subtype="html")
-        mime_msg.attach(msg_txt)
+        to_email = "%s (%s)" % (super_name, super_email)
+        to_email = 'mike@metcalfe.co.za'
+        email = compose_email(
+           from_addr=lab.getEmailAddress(),
+           to_addr=to_email,
+           subj=_("Location syncronization results"),
+           body=email_body,
+           attachments=[])
+        if email:
+            send_email(email)
 
-        # Send the email
-        try:
-            host = api.get_tool("MailHost")
-            host.send(mime_msg.as_string(), immediate=True)
-        except SMTPServerDisconnected as msg:
-            raise SMTPServerDisconnected(msg)
-        except SMTPRecipientsRefused as msg:
-            raise SMTPRecipientsRefused(msg)
 
     def _all_folder_exist(self):
         success = True
@@ -543,7 +539,8 @@ class SyncLocationsView(BrowserView):
         lab_contacts = []
         for contact in lab_contacts_folder.values():
             lab_contacts.append(contact)
-            lab_contact_names.append(contact.Title())
+            contact_title = contact.Title().strip('--- ')
+            lab_contact_names.append(contact_title)
 
         # Prep clients
         clients = api.search({"portal_type": "Client"})
@@ -668,7 +665,7 @@ class SyncLocationsView(BrowserView):
             if row["account_manager1"]:
                 if row["account_manager1"] in lab_contact_names:
                     contact = [
-                        c for c in lab_contacts if row["account_manager1"] == c.Title()
+                        c for c in lab_contacts if row["account_manager1"] == c.Title().strip('--- ')
                     ][0]
                     self.log(
                         "Found lab contact {} for Location {}".format(
@@ -701,7 +698,8 @@ class SyncLocationsView(BrowserView):
                         continue
 
                     lab_contacts.append(contact)
-                    lab_contact_names.append(contact.Title())
+                    contact_title = contact.Title().strip('--- ')
+                    lab_contact_names.append(contact_title)
                     self.log(
                         "Created a Lab Contact {} for location {} and client {}".format(
                             contact.Title(), location_brain.Title, client.Title
@@ -901,7 +899,10 @@ class SyncLocationsView(BrowserView):
                     )
                 )
             contacts = client.getContacts()
-            contact_ids = [c.ContactId for c in contacts]
+            contact_ids = []
+            for contact in contacts:
+                if hasattr(contact, 'ContactId'):
+                    contact_ids.append(contact.ContactId)
             if row["contactID"] in contact_ids:
                 self.log(
                     "Found contact {} in location {}".format(
@@ -911,10 +912,18 @@ class SyncLocationsView(BrowserView):
                 )
                 continue
             else:
+                firstname = "--"
+                surname = "Unknown"
+                if len(row.get('WS_Contact_Name', '')) > 0:
+                    firstname = " ".join(row["WS_Contact_Name"].split(" ")[:-1])
+                    if len(firstname) == 0:
+                        firstname = "---"
+                    surname = row["WS_Contact_Name"].split(" ")[-1]
                 contact = api.create(
                     client,
                     "Contact",
-                    Surname=row.get("WS_Contact_Name", "Missing"),
+                    Surname=surname,
+                    Firstname=firstname,
                 )
                 contact.ContactId = row["contactID"]
                 self.log(
