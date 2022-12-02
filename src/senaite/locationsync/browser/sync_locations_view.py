@@ -24,15 +24,13 @@ from zope.interface import Interface, alsoProvides
 EMAIL_SUPER = True
 COMMIT_COUNT = 100
 FORCE_ABORT = False
-SETUP_RUN = True
+SETUP_RUN = False
 
 CR = "\n"
 ACCOUNT_FILE_NAME = "Account lims.csv"
 LOCATION_FILE_NAME = "location lims.csv"
 SYSTEM_FILE_NAME = "system lims.csv"
 CONTACT_FILE_NAME = "attention contact lims.csv"
-
-EMAIL_ADDRESS = "mike@webtide.co.za"
 
 ACCOUNT_FILE_HEADERS = ["Customer_Number", "Account_name", "Inactive", "On_HOLD"]
 LOCATION_FILE_HEADERS = [
@@ -183,11 +181,9 @@ class SyncLocationsView(BrowserView):
         """.format(
             super_name, timestamp, len(errors), file_url
         )
-        to_email = "%s (%s)" % (super_name, super_email)
-        to_email = 'mike@metcalfe.co.za'
         email = compose_email(
            from_addr=lab.getEmailAddress(),
-           to_addr=to_email,
+           to_addr=super_email,
            subj=_("Location syncronization results"),
            body=email_body,
            attachments=[])
@@ -899,41 +895,38 @@ class SyncLocationsView(BrowserView):
                     )
                 )
             contacts = client.getContacts()
-            contact_ids = []
             for contact in contacts:
-                if hasattr(contact, 'ContactId'):
-                    contact_ids.append(contact.ContactId)
-            if row["contactID"] in contact_ids:
-                self.log(
-                    "Found contact {} in location {}".format(
-                        row["contactID"], location.Title()
-                    ),
-                    context="Contacts",
-                )
-                continue
-            else:
-                firstname = "--"
-                surname = "Unknown"
-                if len(row.get('WS_Contact_Name', '')) > 0:
-                    firstname = " ".join(row["WS_Contact_Name"].split(" ")[:-1])
-                    if len(firstname) == 0:
-                        firstname = "---"
-                    surname = row["WS_Contact_Name"].split(" ")[-1]
-                contact = api.create(
-                    client,
-                    "Contact",
-                    Surname=surname,
-                    Firstname=firstname,
-                )
-                contact.ContactId = row["contactID"]
-                self.log(
-                    "Created contact {} for location {} in client {}".format(
-                        contact.ContactId, location.Title(), client.Title()
-                    ),
-                    context="Contacts",
-                    action="Created",
-                )
-            # TODO Ensure email is correct
+                contact_email = contact.getEmailAddress()
+                if contact_email and row["email"] == contact_email:
+                    self.log(
+                        "Found contact with email {} in location {}".format(
+                            row["email"], location.Title()
+                        ),
+                        context="Contacts",
+                    )
+                    continue
+
+            firstname = "--"
+            surname = "Unknown"
+            if len(row.get('WS_Contact_Name', '')) > 0:
+                firstname = " ".join(row["WS_Contact_Name"].split(" ")[:-1])
+                if len(firstname) == 0:
+                    firstname = "---"
+                surname = row["WS_Contact_Name"].split(" ")[-1]
+            contact = api.create(
+                client,
+                "Contact",
+                Surname=surname,
+                Firstname=firstname,
+            )
+            contact.ContactId = row["contactID"]
+            self.log(
+                "Created contact {} for location {} in client {}".format(
+                    contact.ContactId, location.Title(), client.Title()
+                ),
+                context="Contacts",
+                action="Created",
+            )
             contact.setEmailAddress(row["email"])
             self.log(
                 "Added contact {} to location {} in client {}".format(
