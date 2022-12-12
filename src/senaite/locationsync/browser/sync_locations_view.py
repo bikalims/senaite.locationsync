@@ -4,9 +4,10 @@ from bika.lims.api.mail import compose_email
 from bika.lims.api.mail import send_email
 import csv
 from DateTime import DateTime
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-import json
+
+# from email.mime.multipart import MIMEMultipart
+# from email.mime.text import MIMEText
+# import json
 import logging
 import os
 from plone.protect.interfaces import IDisableCSRFProtection
@@ -16,8 +17,11 @@ from Products.statusmessages.interfaces import IStatusMessage
 from senaite import api
 from senaite.core import logger
 from senaite.locationsync import _
-from smtplib import SMTPRecipientsRefused
-from smtplib import SMTPServerDisconnected
+import subprocess
+import time
+
+# from smtplib import SMTPRecipientsRefused
+# from smtplib import SMTPServerDisconnected
 import transaction
 from zope.interface import Interface, alsoProvides
 
@@ -84,6 +88,24 @@ class SyncLocationsView(BrowserView):
             self.request.response.redirect(self.context.absolute_url())
             return
         no_abort = self.request.form.get("no-abort") is not None
+        if self.request.form.get("commit", "false").lower() == "true":
+            logger.info("Commit every 100 transactions")
+            COMMIT_COUNT = 100
+        else:
+            logger.info("Only commit at the end of the run")
+            COMMIT_COUNT = 0
+        if self.request.form.get("get_emails", "true").lower() == "true":
+            err_code = self.get_emails()
+            if err_code is not None:
+                msg = (
+                    "Process cannot complete because it failed trying to get the emails with code "
+                    + err_code
+                )
+                IStatusMessage(self.request).addStatusMessage(_(msg), "error")
+                self.request.response.redirect(self.context.absolute_url())
+                return
+        else:
+            logger.info("Do not get emaiuls")
         logger.info("SyncLocationsView: no_abort = {}".format(no_abort))
         if (
             self.sync_base_folder is None
@@ -105,7 +127,6 @@ class SyncLocationsView(BrowserView):
         errors = [l for l in self.logs if l["level"].lower() == "error"]
         actions = [l for l in self.logs if l["action"] != "Info"]
         additions = [l for l in actions if l["action"] == "Added"]
-        print(json.dumps(actions, indent=2))
         self.log(
             "Stats: found {} errors and {} actions ({} additions)".format(
                 len(errors), len(actions), len(additions)
@@ -123,7 +144,7 @@ class SyncLocationsView(BrowserView):
             self._move_file(SYSTEM_FILE_NAME, self.sync_error_folder)
             self._move_file(CONTACT_FILE_NAME, self.sync_error_folder)
             if not no_abort:
-                logger.info("Abort all transactions because errors we found")
+                self.log("Abort all transactions because errors we found")
                 transaction.abort()
 
         # Create log file
@@ -146,6 +167,47 @@ class SyncLocationsView(BrowserView):
                 for l in self.logs
             ]
         )
+
+    def get_emails(self):
+        logger.info("Get emails")
+        # python get_email.py --user zzzz --server pop.zzzz.com --pop3 --password zzzz --valid NoReply@zzzz.com.zzzz --match '.* lims' --file_path '/home/zzzz/sync/current'
+        cmd_path = self.sync_base_folder + "/bin/get_email.py"
+        file_path = self.sync_base_folder + "/current"
+        cmds = [
+            "python",
+            cmd_path,
+            "--user",
+            api.get_registry_record(
+                "senaite.locationsync.location_sync_control_panel.sync_email_user"
+            ),
+            "--password",
+            api.get_registry_record(
+                "senaite.locationsync.location_sync_control_panel.sync_email_password"
+            ),
+            "--server",
+            "imap.bikalabs.com",
+            "--match",
+            api.get_registry_record(
+                "senaite.locationsync.location_sync_control_panel.sync_email_allowed_subjects"
+            ),
+            "--file_path",
+            file_path,
+            "--delete",
+        ]
+        valid_emails = api.get_registry_record(
+            "senaite.locationsync.location_sync_control_panel.sync_email_allowed_emails"
+        ).split(",")
+        if valid_emails:
+            cmds.append("--valid")
+            cmds.extend(valid_emails)
+        logger.info("get_emails: commands = %s".format(cmds))
+        try:
+            subprocess.check_call(cmds)
+            time.sleep(60)
+        except subprocess.CalledProcessError as err:
+            err_code = str(err.returncode)
+            logger.error("get_emails failed with error code %s".format(err_code))
+            return err_code
 
     def supervisor_exists(self):
         lab = api.get_setup().laboratory
@@ -182,14 +244,14 @@ class SyncLocationsView(BrowserView):
             super_name, timestamp, len(errors), file_url
         )
         email = compose_email(
-           from_addr=lab.getEmailAddress(),
-           to_addr=super_email,
-           subj=_("Location syncronization results"),
-           body=email_body,
-           attachments=[])
+            from_addr=lab.getEmailAddress(),
+            to_addr=super_email,
+            subj=_("Location syncronization results"),
+            body=email_body,
+            attachments=[],
+        )
         if email:
             send_email(email)
-
 
     def _all_folder_exist(self):
         success = True
@@ -411,6 +473,13 @@ class SyncLocationsView(BrowserView):
 
     def _move_file(self, file_name, dest_folder):
         from_file_path = "{}/{}".format(self.sync_current_folder, file_name)
+        if not os.path.exists(from_file_path):
+            self.log(
+                "Cannot move file {} because it's not found".format(from_file_path),
+                context="MoveFiles",
+                level="error",
+            )
+            return
         if os.path.exists(from_file_path):
             file_name = ".".join(file_name.split(".")[:-1])
             timestamp = DateTime.strftime(DateTime(), "%Y%m%d.%H%M")
@@ -535,7 +604,7 @@ class SyncLocationsView(BrowserView):
         lab_contacts = []
         for contact in lab_contacts_folder.values():
             lab_contacts.append(contact)
-            contact_title = contact.Title().strip('--- ')
+            contact_title = contact.Title().strip("--- ")
             lab_contact_names.append(contact_title)
 
         # Prep clients
@@ -543,6 +612,7 @@ class SyncLocationsView(BrowserView):
         client_ids = [c["getClientID"] for c in clients]
         num_rows = len(data["rows"])
         for i, row in enumerate(data["rows"]):
+            # import pdb; pdb.set_trace()
             if COMMIT_COUNT > 0 and i % COMMIT_COUNT == 0:
                 transaction.commit()
             logger.info("Process row {} of {} from Locations file".format(i, num_rows))
@@ -584,6 +654,7 @@ class SyncLocationsView(BrowserView):
                 0
             ]
             self.log("Found Client {}".format(client.Title), context="Locations")
+
             locations = api.search(
                 {
                     "portal_type": "SamplePointLocation",
@@ -604,7 +675,7 @@ class SyncLocationsView(BrowserView):
             else:
                 # Location does NOT exist
                 client_obj = api.get_object(client)
-                title = row["location_name"].replace("/", "")
+                title = row["location_name"]
                 location = api.create(
                     client_obj,
                     "SamplePointLocation",
@@ -661,7 +732,9 @@ class SyncLocationsView(BrowserView):
             if row["account_manager1"]:
                 if row["account_manager1"] in lab_contact_names:
                     contact = [
-                        c for c in lab_contacts if row["account_manager1"] == c.Title().strip('--- ')
+                        c
+                        for c in lab_contacts
+                        if row["account_manager1"] == c.Title().strip("--- ")
                     ][0]
                     self.log(
                         "Found lab contact {} for Location {}".format(
@@ -694,7 +767,7 @@ class SyncLocationsView(BrowserView):
                         continue
 
                     lab_contacts.append(contact)
-                    contact_title = contact.Title().strip('--- ')
+                    contact_title = contact.Title().strip("--- ")
                     lab_contact_names.append(contact_title)
                     self.log(
                         "Created a Lab Contact {} for location {} and client {}".format(
@@ -895,6 +968,7 @@ class SyncLocationsView(BrowserView):
                     )
                 )
             contacts = client.getContacts()
+            found = False
             for contact in contacts:
                 contact_email = contact.getEmailAddress()
                 if contact_email and row["email"] == contact_email:
@@ -904,11 +978,15 @@ class SyncLocationsView(BrowserView):
                         ),
                         context="Contacts",
                     )
-                    continue
+                    found = True
+                    break
+
+            if found:
+                continue
 
             firstname = "--"
             surname = "Unknown"
-            if len(row.get('WS_Contact_Name', '')) > 0:
+            if len(row.get("WS_Contact_Name", "")) > 0:
                 firstname = " ".join(row["WS_Contact_Name"].split(" ")[:-1])
                 if len(firstname) == 0:
                     firstname = "---"
@@ -920,21 +998,15 @@ class SyncLocationsView(BrowserView):
                 Firstname=firstname,
             )
             contact.ContactId = row["contactID"]
+            contact.setEmailAddress(row["email"])
             self.log(
-                "Created contact {} for location {} in client {}".format(
-                    contact.ContactId, location.Title(), client.Title()
+                "Created contact with email {} for location {} in client {}".format(
+                    contact.getEmailAddress(), location.Title(), client.Title()
                 ),
                 context="Contacts",
                 action="Created",
             )
-            contact.setEmailAddress(row["email"])
-            self.log(
-                "Added contact {} to location {} in client {}".format(
-                    contact.Title(), location.Title(), client.Title()
-                ),
-                context="Contacts",
-                action="Added",
-            )
+            transaction.commit()
         return True
 
     def _get_address_field(self, row, row_num):
