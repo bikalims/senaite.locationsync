@@ -49,9 +49,9 @@ class ILocationSyncControlPanel(Interface):
         required=True,
         readonly=False,
     )
-    sync_dest_email = schema.TextLine(
+    sync_dest_emails = schema.TextLine(
         title=_(
-            "List of emails (comma separeted) to which sync run results must be sent",
+            "List of additional emails (comma separeted) to which sync run results will be sent",
         ),
         required=True,
         readonly=False,

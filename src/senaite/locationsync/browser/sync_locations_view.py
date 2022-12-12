@@ -174,7 +174,7 @@ class SyncLocationsView(BrowserView):
         cmd_path = self.sync_base_folder + "/bin/get_email.py"
         file_path = self.sync_base_folder + "/current"
         cmds = [
-            "python",
+            "python3",
             cmd_path,
             "--user",
             api.get_registry_record(
@@ -200,13 +200,13 @@ class SyncLocationsView(BrowserView):
         if valid_emails:
             cmds.append("--valid")
             cmds.extend(valid_emails)
-        logger.info("get_emails: commands = %s".format(cmds))
+        logger.info("get_emails: commands = {}".format(cmds))
         try:
             subprocess.check_call(cmds)
-            time.sleep(60)
+            time.sleep(10)
         except subprocess.CalledProcessError as err:
             err_code = str(err.returncode)
-            logger.error("get_emails failed with error code %s".format(err_code))
+            logger.error("get_emails failed with error code {}".format(err_code))
             return err_code
 
     def supervisor_exists(self):
@@ -220,10 +220,18 @@ class SyncLocationsView(BrowserView):
     def email_logs(self, errors, actions, log_file_name):
         if not self.supervisor_exists():
             return
+        recipients = api.get_registry_record(
+            "senaite.locationsync.location_sync_control_panel.sync_dest_emails"
+        )
+        if recipients:
+            recipients = recipients.split(',')
+        else:
+            recipients = []
         lab = api.get_setup().laboratory
         supervisor = lab.getSupervisor()
         super_name = safe_unicode(supervisor.getFullname()).encode("utf-8")
         super_email = safe_unicode(lab.getEmailAddress()).encode("utf-8")
+        recipients.append(super_email)
         timestamp = DateTime.strftime(DateTime(), "%Y-%m-%d %H:%M")
         # site_name = self.context.getPhysicalPath()[1]
         # if site_name not in self.context.absolute_url():
@@ -245,7 +253,7 @@ class SyncLocationsView(BrowserView):
         )
         email = compose_email(
             from_addr=lab.getEmailAddress(),
-            to_addr=super_email,
+            to_addr=recipients,
             subj=_("Location syncronization results"),
             body=email_body,
             attachments=[],
