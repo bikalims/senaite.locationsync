@@ -11,7 +11,7 @@ from zope.interface import Interface
 
 from senaite.locationsync import _
 from senaite.locationsync.interfaces import ISenaiteLocationsyncLayer
-
+from z3c.form import button
 
 class ILocationSyncControlPanel(Interface):
     sync_base_folder = schema.TextLine(
@@ -63,6 +63,28 @@ class LocationSyncControlPanel(RegistryEditForm):
     schema_prefix = "senaite.locationsync.location_sync_control_panel"
     label = _("Location Sync Settings")
 
+    @button.buttonAndHandler(_('Cancel'), name='cancel')
+    def handleCancel(self, action):
+        super(LocationSyncControlPanel, self).handleCancel(self, action)
+
+    @button.buttonAndHandler(_('Save'), name=None)
+    def handleSave(self, action):
+        super(LocationSyncControlPanel, self).handleSave(self, action)
+
+    @button.buttonAndHandler(_('Run Sync Now'), name='run_sync')
+    def handleRunSync(self, action):
+        url = "{}/sync_locations_view".format(self.context.absolute_url())
+        self.request.response.redirect(url)
+
+    @button.buttonAndHandler(_('Log Files View'), name='log_files_view')
+    def handleLogFilesView(self, action):
+        url = "{}/log_file_view".format(self.context.absolute_url())
+        self.request.response.redirect(url)
+
+    @button.buttonAndHandler(_('Data Files View'), name='data_files_view')
+    def handleLogFilesView(self, action):
+        url = "{}/data_file_view".format(self.context.absolute_url())
+        self.request.response.redirect(url)
 
 LocationSyncControlPanelView = layout.wrap_form(
     LocationSyncControlPanel, ControlPanelFormWrapper

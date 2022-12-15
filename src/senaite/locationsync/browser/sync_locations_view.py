@@ -80,6 +80,7 @@ class SyncLocationsView(BrowserView):
         self.sync_archive_folder = "{}/archive".format(self.sync_base_folder)
         self.sync_error_folder = "{}/errors".format(self.sync_base_folder)
         self.sync_logs_folder = "{}/logs".format(self.sync_base_folder)
+        self.sync_history_folder = "{}/all".format(self.sync_base_folder)
 
     def __call__(self):
         if EMAIL_SUPER and not self.supervisor_exists():
@@ -125,11 +126,12 @@ class SyncLocationsView(BrowserView):
         alsoProvides(self.request, IDisableCSRFProtection)
         self.sync_locations()
         errors = [l for l in self.logs if l["level"].lower() == "error"]
+        warnings = [l for l in self.logs if l["level"].lower() == "warn"]
         actions = [l for l in self.logs if l["action"] != "Info"]
         additions = [l for l in actions if l["action"] == "Added"]
         self.log(
-            "Stats: found {} errors and {} actions ({} additions)".format(
-                len(errors), len(actions), len(additions)
+            "Stats: found {} errors, {} warnings and {} actions ({} additions)".format(
+                len(errors), len(warnings), len(actions), len(additions)
             )
         )
         # Move data files
@@ -152,7 +154,7 @@ class SyncLocationsView(BrowserView):
 
         # Send email
         if EMAIL_SUPER:
-            self.email_logs(errors, actions, log_file_name)
+            self.email_logs(log_file_name)
         else:
             logger.info("skip supervisory email requested")
 
@@ -217,7 +219,7 @@ class SyncLocationsView(BrowserView):
         else:
             return False
 
-    def email_logs(self, errors, actions, log_file_name):
+    def email_logs(self, log_file_name):
         if not self.supervisor_exists():
             return
         recipients = api.get_registry_record(
@@ -230,31 +232,52 @@ class SyncLocationsView(BrowserView):
         lab = api.get_setup().laboratory
         supervisor = lab.getSupervisor()
         super_name = safe_unicode(supervisor.getFullname()).encode("utf-8")
-        super_email = safe_unicode(lab.getEmailAddress()).encode("utf-8")
+        super_email = safe_unicode(supervisor.getEmailAddress()).encode("utf-8")
         recipients.append(super_email)
         timestamp = DateTime.strftime(DateTime(), "%Y-%m-%d %H:%M")
         # site_name = self.context.getPhysicalPath()[1]
         # if site_name not in self.context.absolute_url():
         #     site_name is None
-        file_url = "{}/@@get_log_file?name={}".format(
+        log_file_url = "{}/@@get_log_file?name={}".format(
             self.context.absolute_url(), log_file_name
         )
         # if site_name is not None:
-        #     file_url = "/{}/@@get_log_file?name={}".format(site_name, log_file_name)
+        #     log_file_url = "/{}/@@get_log_file?name={}".format(site_name, log_file_name)
+        log_dir_url = "{}/log_file_view".format(
+            self.context.absolute_url()
+        )
+        data_dir_url = "{}/data_file_view".format(
+            self.context.absolute_url()
+        )
+        errors = [l for l in self.logs if l["level"].lower() == "error"]
+        warnings = [l for l in self.logs if l["level"].lower() == "warn"]
+        created = [l for l in self.logs if l["action"] == "Created"]
+        additions = [l for l in self.logs if l["action"] == "Added"]
         email_body = """
         Hi {},
 
-        The location syncronization run completed at {} with {} errors.
-        The log file can be found here: {}
+        The location syncronization run completed at {} with:
+            * {} errors
+            * {} warnings
+            * {} creations
+            * {} additions
+        
+        The log file can be found here {}
+        And the history of log files can be found here: {}
+        Remember that all the data files used in the sync can be found here: {}
 
         Regards,
         """.format(
-            super_name, timestamp, len(errors), file_url
+            super_name, timestamp, len(errors), len(warnings), len(created), len(additions), log_file_url, log_dir_url, data_dir_url
         )
+        logger.info("Send sync results to {}".format(recipients))
+        subject = "Location syncronization completed with no errors"
+        if len(errors) > 0:
+            subject = "Location syncronization completed with {} errors".format(len(errors))
         email = compose_email(
             from_addr=lab.getEmailAddress(),
             to_addr=recipients,
-            subj=_("Location syncronization results"),
+            subj=subject,
             body=email_body,
             attachments=[],
         )
@@ -534,7 +557,7 @@ class SyncLocationsView(BrowserView):
                     "Row {} of Contact file is inactive so has been ignored in this setup run".format(
                         i
                     ),
-                    context="Locations",
+                    context="Accounts",
                     level="info",
                 )
                 continue
@@ -543,7 +566,7 @@ class SyncLocationsView(BrowserView):
                 client = [
                     c for c in clients if row["Customer_Number"] == c["getClientID"]
                 ][0]
-                self.log("Found Client {}".format(row["Account_name"]))
+                self.log("Found Client {}".format(row["Account_name"]), context="Accounts")
                 current_state = api.get_workflow_status_of(client)
                 if row["Inactive"] == "1" or row["On_HOLD"] == "1":
                     if current_state == "inactive":
@@ -655,7 +678,7 @@ class SyncLocationsView(BrowserView):
                         row["Customer_Number"], i
                     ),
                     context="Locations",
-                    level="error",
+                    level="warn",
                 )
                 continue
             client = [c for c in clients if row["Customer_Number"] == c["getClientID"]][
@@ -748,6 +771,7 @@ class SyncLocationsView(BrowserView):
                         "Found lab contact {} for Location {}".format(
                             contact.Title(), location_brain.Title
                         ),
+                        context="Locations",
                     )
                 else:
                     firstname = " ".join(row["account_manager1"].split(" ")[:-1])
@@ -830,7 +854,7 @@ class SyncLocationsView(BrowserView):
                     "Row {} of System file is on hold so has been ignored in this setup run".format(
                         i
                     ),
-                    context="Locations",
+                    context="Systems",
                     level="info",
                 )
                 continue
@@ -850,7 +874,7 @@ class SyncLocationsView(BrowserView):
                 msg = "Location {} on row {} in systems file not found in DB".format(
                     row["Location_id"], i
                 )
-                self.log(msg, level="error", context="Systems")
+                self.log(msg, level="warn", context="Systems")
                 continue
             location = None
             location_brain = [
@@ -956,7 +980,7 @@ class SyncLocationsView(BrowserView):
                 msg = "Location {} on row {} in contacts file not found in DB".format(
                     row["Locations_id"], i
                 )
-                self.log(msg, level="error", context="Contacts")
+                self.log(msg, level="warn", context="Contacts")
                 continue
 
             self.log(
