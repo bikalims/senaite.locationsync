@@ -643,7 +643,6 @@ class SyncLocationsView(BrowserView):
         client_ids = [c["getClientID"] for c in clients]
         num_rows = len(data["rows"])
         for i, row in enumerate(data["rows"]):
-            # import pdb; pdb.set_trace()
             if COMMIT_COUNT > 0 and i % COMMIT_COUNT == 0:
                 transaction.commit()
             logger.info("Process row {} of {} from Locations file".format(i, num_rows))
@@ -881,13 +880,13 @@ class SyncLocationsView(BrowserView):
                 l for l in locations if row["Location_id"] == l.getSamplePointLocationID
             ][0]
             self.log("Found Location {}".format(row["Location_id"]), context="Systems")
-            # TODO is location id in catalog?
             systems = api.search(
                 {
                     "portal_type": "SamplePoint",
                     "path": {"query": location_brain.getPath()},
                     "getSamplePointID": row["SystemID"],
-                }
+                },
+                'portal_catalog'
             )
             reindex = False
             if len(systems) > 0:
@@ -1026,9 +1025,9 @@ class SyncLocationsView(BrowserView):
             contact = api.create(
                 client,
                 "Contact",
-                Surname=surname,
-                Firstname=firstname,
             )
+            contact.Firstname = firstname
+            contact.Surname = surname
             contact.ContactId = row["contactID"]
             contact.setEmailAddress(row["email"])
             self.log(
