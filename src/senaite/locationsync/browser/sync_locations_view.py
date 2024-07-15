@@ -2,6 +2,8 @@
 
 from bika.lims.api.mail import compose_email
 from bika.lims.api.mail import send_email
+from bika.lims import api as bika_api
+from bika.lims.api import get_brain_by_uid
 import csv
 from DateTime import DateTime
 
@@ -270,12 +272,18 @@ class SyncLocationsView(BrowserView):
         """.format(
             super_name, timestamp, len(errors), len(warnings), len(created), len(additions), log_file_url, log_dir_url, data_dir_url
         )
-        logger.info("Send sync results to {}".format(recipients))
         subject = "Location syncronization completed with no errors"
         if len(errors) > 0:
             subject = "Location syncronization completed with {} errors".format(len(errors))
+        # HACK!!!!!!
+        recipients=['mike@metcalfe.co.za',]
+        logger.info("Send sync results to {}".format(recipients))
+        from_addr = lab.getEmailAddress()
+        # HACK!!!!!!
+        from_addr = 'mike@webtide.co.za'
+        logger.info("Send sync results from {}".format(from_addr))
         email = compose_email(
-            from_addr=lab.getEmailAddress(),
+            from_addr=from_addr,
             to_addr=recipients,
             subj=subject,
             body=email_body,
@@ -538,7 +546,11 @@ class SyncLocationsView(BrowserView):
         portal = api.get_portal()
 
         # Prep clients
-        clients = api.search({"portal_type": "Client"})
+        clients = bika_api.search({
+                "portal_type": "Client"
+            },
+            catalog="senaite_catalog_client"
+        )
         client_ids = [c["getClientID"] for c in clients]
         num_rows = len(data["rows"])
         for i, row in enumerate(data["rows"]):
@@ -566,7 +578,7 @@ class SyncLocationsView(BrowserView):
                 client = [
                     c for c in clients if row["Customer_Number"] == c["getClientID"]
                 ][0]
-                self.log("Found Client {}".format(row["Account_name"]), context="Accounts")
+                self.log("Found Client {} ({})".format(row["Account_name"], row["Customer_Number"]), context="Accounts")
                 current_state = api.get_workflow_status_of(client)
                 if row["Inactive"] == "1" or row["On_HOLD"] == "1":
                     if current_state == "inactive":
@@ -603,7 +615,7 @@ class SyncLocationsView(BrowserView):
                         client.reindexObject()
             else:
                 # Client not in DB
-                client = api.create(
+                client = bika_api.create(
                     portal.clients,
                     "Client",
                     ClientID=row["Customer_Number"],
@@ -639,7 +651,11 @@ class SyncLocationsView(BrowserView):
             lab_contact_names.append(contact_title)
 
         # Prep clients
-        clients = api.search({"portal_type": "Client"})
+        clients = bika_api.search({
+                "portal_type": "Client"
+            },
+            catalog="senaite_catalog_client"
+        )
         client_ids = [c["getClientID"] for c in clients]
         num_rows = len(data["rows"])
         for i, row in enumerate(data["rows"]):
@@ -683,14 +699,15 @@ class SyncLocationsView(BrowserView):
             client = [c for c in clients if row["Customer_Number"] == c["getClientID"]][
                 0
             ]
-            self.log("Found Client {}".format(client.Title), context="Locations")
+            self.log("Found Client {} ({})".format(client.Title, row["Customer_Number"]), context="Locations")
 
-            locations = api.search(
+            locations = bika_api.search(
                 {
                     "portal_type": "SamplePointLocation",
                     "path": {"query": client.getPath()},
                     "getSamplePointLocationID": row["Locations_id"],
-                }
+                },
+                catalog="senaite_catalog_setup"
             )
             location = None
             if locations:
@@ -706,31 +723,51 @@ class SyncLocationsView(BrowserView):
                 # Location does NOT exist
                 client_obj = api.get_object(client)
                 title = row["location_name"]
-                location = api.create(
+                location = bika_api.create(
                     client_obj,
                     "SamplePointLocation",
                     title=title,
                     # sample_point_location_id=row["Locations_id"],
                 )
                 location.setSamplePointLocationID(row["Locations_id"])
+                client_path = "/".join(client_obj.getPhysicalPath())
+                location_path = "/".join(location.getPhysicalPath())
                 self.log(
-                    "Created location {} in Client {}".format(
-                        location.Title(), client.Title
+                    "Created location {} in Client {} at {}".format(
+                        title, client.Title, client_path
                     ),
                     context="Locations",
                     action="Created",
                 )
-                location_brain = api.search(
-                    {
-                        "portal_type": "SamplePointLocation",
-                        "path": {"query": "/".join(location.getPhysicalPath())},
-                    }
-                )[0]
+                location_brain = get_brain_by_uid(location.UID())
+                if not location_brain:
+                    self.log(
+                        "Failed to find newly created location {} and client {}".format(
+                            title,
+                            client.Title,
+                        ),
+                        context="Locations",
+                        level="error",
+                        action="ReportToSysAdmin",
+                        )
+                    continue
+                else:
+                    self.log(
+                        "Found newly created location {} and client {}".format(
+                            location_brain.Title,
+                            client.Title,
+                        ),
+                        context="Locations",
+                        level="info",
+                        )
+
 
             # Rules for if location existed or has just been created
             if row["HOLD"] == "1" or row["Cancel_Box"] == "1":
                 # deactivate location and children
-                current_state = location_brain.review_state
+                current_state = 'active'
+                if hasattr(location_brain, 'review_state'):
+                    current_state = location_brain.review_state
                 if current_state == "active":
                     if location is None:
                         location = api.get_object(location_brain)
@@ -742,11 +779,12 @@ class SyncLocationsView(BrowserView):
                         context="Locations",
                         action="Deactivated",
                     )
-                systems = api.search(
+                systems = bika_api.search(
                     {
                         "portal_type": "SamplePoint",
                         "path": {"query": location_brain.getPath()},
-                    }
+                    },
+                    catalog="senaite_catalog_setup"
                 )
                 for system in systems:
                     if system.review_state == "active":
@@ -778,7 +816,7 @@ class SyncLocationsView(BrowserView):
                         firstname = "---"
                     surname = row["account_manager1"].split(" ")[-1]
                     try:
-                        contact = api.create(
+                        contact = bika_api.create(
                             lab_contacts_folder,
                             "LabContact",
                             Surname=surname,
@@ -808,7 +846,9 @@ class SyncLocationsView(BrowserView):
                         action="Created",
                     )
                     # TODO Notify lab admin that new lab contact created with no email
-                contacts = location_brain.getAccountManagers
+                contacts = None
+                if hasattr(location_brain, 'getAccountManagers'):
+                    contacts = location_brain.getAccountManagers
                 if contacts is None:
                     contacts = []
                 if contact.UID() not in contacts:
@@ -828,11 +868,12 @@ class SyncLocationsView(BrowserView):
                 if address:
                     if location is None:
                         location = api.get_object(location_brain)
-                    if [address] != location.getAddress():
+                    old_address = location.getAddress()
+                    if [address] != old_address:
                         location.setAddress([address])
                         self.log(
-                            "Added Address to location {} and client {}".format(
-                                location_brain.Title, client.Title
+                            "Changed Address to location {} and client {} from {} to {}".format(
+                                location_brain.Title, client.Title, old_address, address
                             ),
                             context="Locations",
                             action="Added",
@@ -841,7 +882,11 @@ class SyncLocationsView(BrowserView):
         return True
 
     def process_systems_rules(self, data):
-        locations = api.search({"portal_type": "SamplePointLocation"})
+        locations = bika_api.search({
+                "portal_type": "SamplePointLocation"
+            },
+            catalog="senaite_catalog_setup"
+        )
         location_ids = [l.getSamplePointLocationID for l in locations]
         num_rows = len(data["rows"])
         for i, row in enumerate(data["rows"]):
@@ -880,13 +925,13 @@ class SyncLocationsView(BrowserView):
                 l for l in locations if row["Location_id"] == l.getSamplePointLocationID
             ][0]
             self.log("Found Location {}".format(row["Location_id"]), context="Systems")
-            systems = api.search(
+            systems = bika_api.search(
                 {
                     "portal_type": "SamplePoint",
                     "path": {"query": location_brain.getPath()},
                     "getSamplePointID": row["SystemID"],
                 },
-                'portal_catalog'
+                catalog="senaite_catalog_setup"
             )
             reindex = False
             if len(systems) > 0:
@@ -919,7 +964,7 @@ class SyncLocationsView(BrowserView):
                     continue
                 if location is None:
                     location = api.get_object(location_brain)
-                system = api.create(
+                system = bika_api.create(
                     location,
                     "SamplePoint",
                     title=row["system_name"],
@@ -949,7 +994,11 @@ class SyncLocationsView(BrowserView):
         return True
 
     def process_contacts_rules(self, data):
-        locations = api.search({"portal_type": "SamplePointLocation"})
+        locations = api.search({
+                "portal_type": "SamplePointLocation"
+            },
+            catalog="senaite_catalog_setup"
+        )
         locations = [api.get_object(l) for l in locations]
         location_ids = [l.getSamplePointLocationID() for l in locations]
         num_rows = len(data["rows"])
@@ -1022,7 +1071,7 @@ class SyncLocationsView(BrowserView):
                 if len(firstname) == 0:
                     firstname = "---"
                 surname = row["WS_Contact_Name"].split(" ")[-1]
-            contact = api.create(
+            contact = bika_api.create(
                 client,
                 "Contact",
             )
