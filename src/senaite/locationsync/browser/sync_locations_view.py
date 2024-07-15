@@ -275,12 +275,8 @@ class SyncLocationsView(BrowserView):
         subject = "Location syncronization completed with no errors"
         if len(errors) > 0:
             subject = "Location syncronization completed with {} errors".format(len(errors))
-        # HACK!!!!!!
-        recipients=['mike@metcalfe.co.za',]
         logger.info("Send sync results to {}".format(recipients))
         from_addr = lab.getEmailAddress()
-        # HACK!!!!!!
-        from_addr = 'mike@webtide.co.za'
         logger.info("Send sync results from {}".format(from_addr))
         email = compose_email(
             from_addr=from_addr,
