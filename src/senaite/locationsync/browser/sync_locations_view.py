@@ -127,10 +127,10 @@ class SyncLocationsView(BrowserView):
         # disable CSRF because
         alsoProvides(self.request, IDisableCSRFProtection)
         self.sync_locations()
-        errors = [l for l in self.logs if l["level"].lower() == "error"]
-        warnings = [l for l in self.logs if l["level"].lower() == "warn"]
-        actions = [l for l in self.logs if l["action"] != "Info"]
-        additions = [l for l in actions if l["action"] == "Added"]
+        errors = [log for log in self.logs if log["level"].lower() == "error"]
+        warnings = [log for log in self.logs if log["level"].lower() == "warn"]
+        actions = [log for log in self.logs if log["action"] != "Info"]
+        additions = [act for act in actions if act["action"] == "Added"]
         self.log(
             "Stats: found {} errors, {} warnings and {} actions ({} additions)".format(
                 len(errors), len(warnings), len(actions), len(additions)
@@ -167,8 +167,8 @@ class SyncLocationsView(BrowserView):
         # return the concatenated logs
         return CR.join(
             [
-                "{} {:10} {}".format(l["time"], str(l["action"]), l["message"])
-                for l in self.logs
+                "{} {:10} {}".format(log["time"], str(log["action"]), log["message"])
+                for log in self.logs
             ]
         )
 
@@ -228,7 +228,7 @@ class SyncLocationsView(BrowserView):
             "senaite.locationsync.location_sync_control_panel.sync_dest_emails"
         )
         if recipients:
-            recipients = recipients.split(',')
+            recipients = recipients.split(",")
         else:
             recipients = []
         lab = api.get_setup().laboratory
@@ -245,16 +245,12 @@ class SyncLocationsView(BrowserView):
         )
         # if site_name is not None:
         #     log_file_url = "/{}/@@get_log_file?name={}".format(site_name, log_file_name)
-        log_dir_url = "{}/log_file_view".format(
-            self.context.absolute_url()
-        )
-        data_dir_url = "{}/data_file_view".format(
-            self.context.absolute_url()
-        )
-        errors = [l for l in self.logs if l["level"].lower() == "error"]
-        warnings = [l for l in self.logs if l["level"].lower() == "warn"]
-        created = [l for l in self.logs if l["action"] == "Created"]
-        additions = [l for l in self.logs if l["action"] == "Added"]
+        log_dir_url = "{}/log_file_view".format(self.context.absolute_url())
+        data_dir_url = "{}/data_file_view".format(self.context.absolute_url())
+        errors = [log for log in self.logs if log["level"].lower() == "error"]
+        warnings = [log for log in self.logs if log["level"].lower() == "warn"]
+        created = [log for log in self.logs if log["action"] == "Created"]
+        additions = [act for act in self.logs if act["action"] == "Added"]
         email_body = """
         Hi {},
 
@@ -263,18 +259,28 @@ class SyncLocationsView(BrowserView):
             * {} warnings
             * {} creations
             * {} additions
-        
+
         The log file can be found here {}
         And the history of log files can be found here: {}
         Remember that all the data files used in the sync can be found here: {}
 
         Regards,
         """.format(
-            super_name, timestamp, len(errors), len(warnings), len(created), len(additions), log_file_url, log_dir_url, data_dir_url
+            super_name,
+            timestamp,
+            len(errors),
+            len(warnings),
+            len(created),
+            len(additions),
+            log_file_url,
+            log_dir_url,
+            data_dir_url,
         )
         subject = "Location syncronization completed with no errors"
         if len(errors) > 0:
-            subject = "Location syncronization completed with {} errors".format(len(errors))
+            subject = "Location syncronization completed with {} errors".format(
+                len(errors)
+            )
         logger.info("Send sync results to {}".format(recipients))
         from_addr = lab.getEmailAddress()
         logger.info("Send sync results from {}".format(from_addr))
@@ -468,7 +474,7 @@ class SyncLocationsView(BrowserView):
                         break
                     self.log(
                         "File {} with correct {} header columns".format(
-                            file_name, len(row), context=file_type
+                            file_name, len(row)
                         ),
                         context=file_type,
                     )
@@ -542,10 +548,8 @@ class SyncLocationsView(BrowserView):
         portal = api.get_portal()
 
         # Prep clients
-        clients = bika_api.search({
-                "portal_type": "Client"
-            },
-            catalog="senaite_catalog_client"
+        clients = bika_api.search(
+            {"portal_type": "Client"}, catalog="senaite_catalog_client"
         )
         client_ids = [c["getClientID"] for c in clients]
         num_rows = len(data["rows"])
@@ -574,7 +578,12 @@ class SyncLocationsView(BrowserView):
                 client = [
                     c for c in clients if row["Customer_Number"] == c["getClientID"]
                 ][0]
-                self.log("Found Client {} ({})".format(row["Account_name"], row["Customer_Number"]), context="Accounts")
+                self.log(
+                    "Found Client {} ({})".format(
+                        row["Account_name"], row["Customer_Number"]
+                    ),
+                    context="Accounts",
+                )
                 current_state = api.get_workflow_status_of(client)
                 if row["Inactive"] == "1" or row["On_HOLD"] == "1":
                     if current_state == "inactive":
@@ -647,10 +656,8 @@ class SyncLocationsView(BrowserView):
             lab_contact_names.append(contact_title)
 
         # Prep clients
-        clients = bika_api.search({
-                "portal_type": "Client"
-            },
-            catalog="senaite_catalog_client"
+        clients = bika_api.search(
+            {"portal_type": "Client"}, catalog="senaite_catalog_client"
         )
         client_ids = [c["getClientID"] for c in clients]
         num_rows = len(data["rows"])
@@ -695,7 +702,10 @@ class SyncLocationsView(BrowserView):
             client = [c for c in clients if row["Customer_Number"] == c["getClientID"]][
                 0
             ]
-            self.log("Found Client {} ({})".format(client.Title, row["Customer_Number"]), context="Locations")
+            self.log(
+                "Found Client {} ({})".format(client.Title, row["Customer_Number"]),
+                context="Locations",
+            )
 
             locations = bika_api.search(
                 {
@@ -703,7 +713,7 @@ class SyncLocationsView(BrowserView):
                     "path": {"query": client.getPath()},
                     "getSamplePointLocationID": row["Locations_id"],
                 },
-                catalog="senaite_catalog_setup"
+                catalog="senaite_catalog_setup",
             )
             location = None
             if locations:
@@ -727,7 +737,7 @@ class SyncLocationsView(BrowserView):
                 )
                 location.setSamplePointLocationID(row["Locations_id"])
                 client_path = "/".join(client_obj.getPhysicalPath())
-                location_path = "/".join(location.getPhysicalPath())
+                # location_path = "/".join(location.getPhysicalPath())
                 self.log(
                     "Created location {} in Client {} at {}".format(
                         title, client.Title, client_path
@@ -745,7 +755,7 @@ class SyncLocationsView(BrowserView):
                         context="Locations",
                         level="error",
                         action="ReportToSysAdmin",
-                        )
+                    )
                     continue
                 else:
                     self.log(
@@ -755,14 +765,13 @@ class SyncLocationsView(BrowserView):
                         ),
                         context="Locations",
                         level="info",
-                        )
-
+                    )
 
             # Rules for if location existed or has just been created
             if row["HOLD"] == "1" or row["Cancel_Box"] == "1":
                 # deactivate location and children
-                current_state = 'active'
-                if hasattr(location_brain, 'review_state'):
+                current_state = "active"
+                if hasattr(location_brain, "review_state"):
                     current_state = location_brain.review_state
                 if current_state == "active":
                     if location is None:
@@ -780,7 +789,7 @@ class SyncLocationsView(BrowserView):
                         "portal_type": "SamplePoint",
                         "path": {"query": location_brain.getPath()},
                     },
-                    catalog="senaite_catalog_setup"
+                    catalog="senaite_catalog_setup",
                 )
                 for system in systems:
                     if system.review_state == "active":
@@ -843,7 +852,7 @@ class SyncLocationsView(BrowserView):
                     )
                     # TODO Notify lab admin that new lab contact created with no email
                 contacts = None
-                if hasattr(location_brain, 'getAccountManagers'):
+                if hasattr(location_brain, "getAccountManagers"):
                     contacts = location_brain.getAccountManagers
                 if contacts is None:
                     contacts = []
@@ -878,12 +887,10 @@ class SyncLocationsView(BrowserView):
         return True
 
     def process_systems_rules(self, data):
-        locations = bika_api.search({
-                "portal_type": "SamplePointLocation"
-            },
-            catalog="senaite_catalog_setup"
+        locations = bika_api.search(
+            {"portal_type": "SamplePointLocation"}, catalog="senaite_catalog_setup"
         )
-        location_ids = [l.getSamplePointLocationID for l in locations]
+        location_ids = [loc.getSamplePointLocationID for loc in locations]
         num_rows = len(data["rows"])
         for i, row in enumerate(data["rows"]):
             if COMMIT_COUNT > 0 and i % COMMIT_COUNT == 0:
@@ -918,7 +925,9 @@ class SyncLocationsView(BrowserView):
                 continue
             location = None
             location_brain = [
-                l for l in locations if row["Location_id"] == l.getSamplePointLocationID
+                loc
+                for loc in locations
+                if row["Location_id"] == loc.getSamplePointLocationID
             ][0]
             self.log("Found Location {}".format(row["Location_id"]), context="Systems")
             systems = bika_api.search(
@@ -927,7 +936,7 @@ class SyncLocationsView(BrowserView):
                     "path": {"query": location_brain.getPath()},
                     "getSamplePointID": row["SystemID"],
                 },
-                catalog="senaite_catalog_setup"
+                catalog="senaite_catalog_setup",
             )
             reindex = False
             if len(systems) > 0:
@@ -990,13 +999,11 @@ class SyncLocationsView(BrowserView):
         return True
 
     def process_contacts_rules(self, data):
-        locations = api.search({
-                "portal_type": "SamplePointLocation"
-            },
-            catalog="senaite_catalog_setup"
+        locations = api.search(
+            {"portal_type": "SamplePointLocation"}, catalog="senaite_catalog_setup"
         )
-        locations = [api.get_object(l) for l in locations]
-        location_ids = [l.getSamplePointLocationID() for l in locations]
+        locations = [api.get_object(loc) for loc in locations]
+        location_ids = [loc.getSamplePointLocationID() for loc in locations]
         num_rows = len(data["rows"])
         for i, row in enumerate(data["rows"]):
             if COMMIT_COUNT > 0 and i % COMMIT_COUNT == 0:
@@ -1031,9 +1038,9 @@ class SyncLocationsView(BrowserView):
                 "Found Location {}".format(row["Locations_id"]), context="Contacts"
             )
             location = [
-                l
-                for l in locations
-                if row["Locations_id"] == l.getSamplePointLocationID()
+                loc
+                for loc in locations
+                if row["Locations_id"] == loc.getSamplePointLocationID()
             ][0]
             location = api.get_object(location)
             client = location.aq_parent
