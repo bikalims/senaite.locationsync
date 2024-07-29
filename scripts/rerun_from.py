@@ -10,7 +10,7 @@ SYNC_BASE_FOLDER = "/home/senaite/sync"
 SYNC_CURRENT_FOLDER = "{}/current".format(SYNC_BASE_FOLDER)
 
 def invoke_sync(user, password):
-    url = "https://lims.hydrochem.com.au/@@sync_locations_view?get_emails=false&commit=true"
+    url = "https://lims.hydrochem.com.au/@@sync_locations_view?get_emails=false&commit=true&confirm=true"
     print(f"get url {url}")
 
     response = requests.get(url, auth=(user, password)
