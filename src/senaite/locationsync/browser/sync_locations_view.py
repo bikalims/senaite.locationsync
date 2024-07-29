@@ -91,6 +91,14 @@ class SyncLocationsView(BrowserView):
             self.request.response.redirect(self.context.absolute_url())
             return
         no_abort = self.request.form.get("no-abort") is not None
+        if self.request.form.get("confirm", "false").lower() == "false":
+            msg = "Command not confirmed"
+            IStatusMessage(self.request).addStatusMessage(_(msg), "error")
+            self.request.response.redirect(self.context.absolute_url())
+            logger.info("")
+            return
+        else:
+            logger.info("Parameter confirm = true")
         if self.request.form.get("commit", "false").lower() == "true":
             logger.info("Commit every 100 transactions")
             COMMIT_COUNT = 100
