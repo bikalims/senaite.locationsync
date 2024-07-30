@@ -85,17 +85,20 @@ class SyncLocationsView(BrowserView):
         self.sync_history_folder = "{}/all".format(self.sync_base_folder)
 
     def __call__(self):
+        logger.info("location sync invoked")
         if EMAIL_SUPER and not self.supervisor_exists():
             msg = "Laboratory has no supervisor to email the results to. Assign one and try again"
             IStatusMessage(self.request).addStatusMessage(_(msg), "error")
             self.request.response.redirect(self.context.absolute_url())
+            logger.info(msg)
             return
         no_abort = self.request.form.get("no-abort") is not None
+        logger.info("form = {}".format(self.request.form))
         if self.request.form.get("confirm", "false").lower() == "false":
             msg = "Command not confirmed"
             IStatusMessage(self.request).addStatusMessage(_(msg), "error")
             self.request.response.redirect(self.context.absolute_url())
-            logger.info("")
+            logger.info(msg)
             return
         else:
             logger.info("Parameter confirm = true")
@@ -114,6 +117,7 @@ class SyncLocationsView(BrowserView):
                 )
                 IStatusMessage(self.request).addStatusMessage(_(msg), "error")
                 self.request.response.redirect(self.context.absolute_url())
+                logger.info(msg)
                 return
         else:
             logger.info("Do not get emaiuls")
@@ -126,11 +130,13 @@ class SyncLocationsView(BrowserView):
             msg = "Sync Base Folder value on Control Panel is not set correctly"
             IStatusMessage(self.request).addStatusMessage(_(msg), "error")
             self.request.response.redirect(self.context.absolute_url())
+            logger.info(msg)
             return
 
         msg = "Location syncronization could take some time so the results will be emailed when complete"
         IStatusMessage(self.request).addStatusMessage(_(msg), "info")
         self.request.response.redirect(self.context.absolute_url())
+        logger.info(msg)
 
         # disable CSRF because
         alsoProvides(self.request, IDisableCSRFProtection)
@@ -172,6 +178,7 @@ class SyncLocationsView(BrowserView):
             logger.info("Force abort requested")
             transaction.abort()
 
+        logger.info("location sync complete")
         # return the concatenated logs
         return CR.join(
             [
