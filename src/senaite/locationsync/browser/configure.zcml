@@ -22,7 +22,7 @@
     name="sync_locations_view"
     for="*"
     class=".sync_locations_view.SyncLocationsView"
-    permission="zope2.View"
+    permission="cmf.ManagePortal"
     layer="senaite.locationsync.interfaces.ISenaiteLocationsyncLayer"
     />
 </configure>
