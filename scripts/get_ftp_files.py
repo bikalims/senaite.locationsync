@@ -17,26 +17,27 @@ import logging
 import re
 import smtplib
 
+now = datetime.datetime.now().strftime("%Y%m%d.%H%M")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("get_ftp_files")
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-fh = logging.FileHandler("get_ftp_files.log")
+fh = logging.FileHandler(f"/home/senaite/sync/logs/get_ftp_files-{now}.log")
 fh.setFormatter(formatter)
 logger.addHandler(fh)
 
-port = 8025  # Local smtp server
+port = 25  # Local smtp server
 smtp_server = "localhost"
-sender_email = "mike@webtide.co.za"
+sender_email = "lunga@bikalims.com"
 receiver_email = "mike@metcalfe.co.za"
 fail_message = """\
-Subject: Hydrochem Sync Files Missing
+Subject: Hydrochem Sync FTP Files Missing
 
-No Hydrochem Sync files found
+No Hydrochem Sync files found on FTP server
 """
 success_message = """\
-Subject: Hydrochem Sync Files Found
+Subject: Hydrochem Sync FTP Files Found
 
-{} Hydrochem Sync files found
+{} Hydrochem Sync files found on FTP server
 """
 
 
@@ -67,11 +68,12 @@ def list_files(ftp, directory):
     msg = ftp.cwd(directory)
     logger.info(f"FTP server replied: {msg}")
     files = ftp.nlst()
-    logger.debug("Files in remote directory:", files)
+    logger.info(f"Files in remote directory: {files}")
+    logger.info(f"Found {len(files)} files in {directory}")
     return files
 
 
-def download_file(ftp, filename, local_filename):
+def download_file(args, ftp, filename, local_filename):
     """Download a file from the FTP server."""
     logger.info(f"Download file {filename} to {local_filename}")
     with open(local_filename, "wb") as local_file:
@@ -114,7 +116,8 @@ def main():
         "--date_pattern",
         type=str,
         help="date pattern to filter files using python strftime format",
-        default="%Y%m%d",
+        # default="%Y%m%d",
+        default="",
     )
     parser.add_argument(
         "-dr",
@@ -128,6 +131,24 @@ def main():
         type=str,
         help="Local directory to save downloaded files",
         required=True,
+    )
+    parser.add_argument(
+        "-b",
+        "--local_backup",
+        type=str,
+        help="Local directory to backup timestamped files",
+        required=False,
+    )
+    parser.add_argument(
+        "--dry_run",
+        action="store_true",
+        help="Don't copy files",
+    )
+    parser.add_argument(
+        "-e",
+        "--send_email",
+        action="store_true",
+        help="Send out email",
     )
     args = parser.parse_args()
     if args.date is None:
@@ -162,13 +183,22 @@ def main():
             logger.debug(f"Look for file on date {date_str}")
             for filename in files:
                 # Create a regex pattern for the date
-                date_pattern = re.compile(re.escape(date_str))
-                if date_pattern.search(filename):
+                re_date_pattern = re.compile(re.escape(date_str))
+                if re_date_pattern.search(filename):
+                    # Download to local
                     local_filename = f"{args.local_directory}/{filename}"
-                    download_file(ftp, filename, local_filename)
+                    if not args.dry_run:
+                        download_file(args, ftp, filename, local_filename)
+
+                    # Download to local backup
+                    if args.local_backup:
+                        local_filename = filename.split('.csv')[0]
+                        local_filename = f"{args.local_backup}/{local_filename}.{now}.csv"
+                        if not args.dry_run:
+                            download_file(args, ftp, filename, local_filename)
                     cnt += 1
                 else:
-                    logger.debug(f"File {filename} does not match the date pattern")
+                    logger.info(f"File {filename} does not match the date pattern {date_str}")
 
             if not args.date_range:
                 break
@@ -179,18 +209,22 @@ def main():
 
         logger.info(f"Downloaded {cnt} files")
 
-        if cnt == 0:
-            # Send email
-            logger.info("SendEmail: Did not find today's sync file")
-            with smtplib.SMTP(smtp_server, port) as server:
-                server.sendmail(sender_email, receiver_email, fail_message)
+        if args.send_email:
+            logger.info("SendEmail: enabled")
+            if cnt == 0:
+                # Send email
+                logger.info("SendEmail: Did not find today's sync file")
+                with smtplib.SMTP(smtp_server, port) as server:
+                    server.sendmail(sender_email, receiver_email, fail_message)
+            else:
+                # All good
+                logger.info(f"SendEmail: Found today's sync file {args.date}")
+                with smtplib.SMTP(smtp_server, port) as server:
+                    server.sendmail(
+                        sender_email, receiver_email, success_message.format(cnt)
+                    )
         else:
-            # All good
-            logger.info(f"SendEmail: Found today's sync file {args.date}")
-            with smtplib.SMTP(smtp_server, port) as server:
-                server.sendmail(
-                    sender_email, receiver_email, success_message.format(cnt)
-                )
+            logger.info("SendEmail: disabled")
 
     finally:
         # Always close the connection
