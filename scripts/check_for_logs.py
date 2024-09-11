@@ -2,15 +2,15 @@
 
 import datetime
 import os
-import shutil
-import smtplib, ssl
-import sys
+import smtplib
+
+# import ssl
 
 port = 25  # Local smtp server
 smtp_server = "localhost"
 sender_email = "mike@webtide.co.za"
 receiver_email = "mike@metcalfe.co.za"
-faile_message = """\
+fail_message = """\
 Subject: Hydrochem Sync Log Missing
 
 The Hydrochem Sync log file cannot be found for today
@@ -21,7 +21,7 @@ Subject: Hydrochem Sync Log Found
 The Hydrochem Sync log file found for today
 """
 
-context = ssl.create_default_context()
+# context = ssl.create_default_context()
 SYNC_BASE_FOLDER = "/home/senaite/sync"
 SYNC_LOGS_FOLDER = "{}/logs".format(SYNC_BASE_FOLDER)
 
@@ -38,6 +38,7 @@ def find_todays_log_file():
         if runtime in file_name:
             return file_name
     return
+
 
 def check_for_logfile():
     file_name = find_todays_log_file()
