@@ -28,7 +28,7 @@ logger.addHandler(fh)
 port = 25  # Local smtp server
 smtp_server = "localhost"
 sender_email = "lunga@bikalims.com"
-receiver_email = "mike@metcalfe.co.za"
+receiver_email = "lunga001@gmail.com"
 fail_message = """\
 Subject: Hydrochem Sync FTP Files Missing
 
@@ -79,6 +79,12 @@ def download_file(args, ftp, filename, local_filename):
     with open(local_filename, "wb") as local_file:
         msg = ftp.retrbinary(f"RETR {filename}", local_file.write)
         logger.info(f"FTP server replied: {msg}")
+
+def delete_file(args, ftp, filename):
+    """Delete a file from the FTP server."""
+    logger.info(f"Delete file {filename}")
+    msg = ftp.delete(filename)
+    logger.info(f"FTP server replied: {msg}")
 
 
 def main():
@@ -196,6 +202,9 @@ def main():
                         local_filename = f"{args.local_backup}/{local_filename}.{now}.csv"
                         if not args.dry_run:
                             download_file(args, ftp, filename, local_filename)
+
+                    if not args.dry_run:
+                        delete_file(args, ftp, filename)
                     cnt += 1
                 else:
                     logger.info(f"File {filename} does not match the date pattern {date_str}")
