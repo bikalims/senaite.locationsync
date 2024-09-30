@@ -108,19 +108,19 @@ class SyncLocationsView(BrowserView):
         else:
             logger.info("Only commit at the end of the run")
             COMMIT_COUNT = 0
-        if self.request.form.get("get_emails", "true").lower() == "true":
-            err_code = self.get_emails()
-            if err_code is not None:
-                msg = (
-                    "Process cannot complete because it failed trying to get the emails with code "
-                    + err_code
-                )
-                IStatusMessage(self.request).addStatusMessage(_(msg), "error")
-                self.request.response.redirect(self.context.absolute_url())
-                logger.info(msg)
-                return
-        else:
-            logger.info("Do not get emaiuls")
+        # if self.request.form.get("get_emails", "true").lower() == "true":
+        #     err_code = self.get_emails()
+        #     if err_code is not None:
+        #         msg = (
+        #             "Process cannot complete because it failed trying to get the emails with code "
+        #             + err_code
+        #         )
+        #         IStatusMessage(self.request).addStatusMessage(_(msg), "error")
+        #         self.request.response.redirect(self.context.absolute_url())
+        #         logger.info(msg)
+        #         return
+        # else:
+        #     logger.info("Do not get emaiuls")
         logger.info("SyncLocationsView: no_abort = {}".format(no_abort))
         if (
             self.sync_base_folder is None
@@ -189,6 +189,9 @@ class SyncLocationsView(BrowserView):
 
     def get_emails(self):
         logger.info("Get emails")
+        logger.error("get_emails has been discontinued for an FTP solution")
+        return
+
         # python get_email.py --user zzzz --server pop.zzzz.com --pop3 --password zzzz --valid NoReply@zzzz.com.zzzz --match '.* lims' --file_path '/home/zzzz/sync/current'
         cmd_path = self.sync_base_folder + "/bin/get_email.py"
         file_path = self.sync_base_folder + "/current"
@@ -418,7 +421,7 @@ class SyncLocationsView(BrowserView):
             transaction.commit()
 
     def clean_row(self, row):
-        illegal_chars = ["\xef\xbb\xbf", "\xa0", u"\u2019"]
+        illegal_chars = ["\xef\xbb\xbf", "\xa0", "\u2019"]
         cleaned = []
         for cell in row:
             cell = cell.strip()
@@ -518,9 +521,7 @@ class SyncLocationsView(BrowserView):
                             context=file_type,
                             level="warn",
                         )
-                        val = (
-                            row[idx].decode("utf-8", "replace").replace(u"\ufffd", " ")
-                        )
+                        val = row[idx].decode("utf-8", "replace").replace("\ufffd", " ")
                     adict[headers[idx]] = val
                 rows.append(adict)
                 # self.log("File {} row {}: {}".format(file_name, i, ", ".join(row)))

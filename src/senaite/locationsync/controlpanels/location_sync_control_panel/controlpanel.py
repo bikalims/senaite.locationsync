@@ -13,38 +13,11 @@ from senaite.locationsync import _
 from senaite.locationsync.interfaces import ISenaiteLocationsyncLayer
 from z3c.form import button
 
+
 class ILocationSyncControlPanel(Interface):
     sync_base_folder = schema.TextLine(
         title=_(
             "Server base folder where the synconization files will be placed",
-        ),
-        required=True,
-        readonly=False,
-    )
-    sync_email_user = schema.TextLine(
-        title=_(
-            "User of email account to which sync files are sent",
-        ),
-        required=True,
-        readonly=False,
-    )
-    sync_email_password = schema.Password(
-        title=_(
-            "Password of email account to which sync files are sent",
-        ),
-        required=True,
-        readonly=False,
-    )
-    sync_email_allowed_emails = schema.TextLine(
-        title=_(
-            "List of emails (comma separated) from which sync files can be sent",
-        ),
-        required=True,
-        readonly=False,
-    )
-    sync_email_allowed_subjects = schema.TextLine(
-        title=_(
-            "Regular Expression to match sync email subjects",
         ),
         required=True,
         readonly=False,
@@ -56,6 +29,66 @@ class ILocationSyncControlPanel(Interface):
         required=True,
         readonly=False,
     )
+    # sync_ftp_server = schema.TextLine(
+    #     title=_(
+    #         "The FTP server from which sync files are retrieved",
+    #     ),
+    #     required=True,
+    #     readonly=False,
+    # )
+    # sync_ftp_folder = schema.TextLine(
+    #     title=_(
+    #         "The folder on the FTP server from which sync files are retrieved",
+    #     ),
+    #     required=True,
+    #     readonly=False,
+    # )
+    # sync_ftp_user = schema.TextLine(
+    #     title=_(
+    #         "User name of FTP account from which sync files are retrieved",
+    #     ),
+    #     required=True,
+    #     readonly=False,
+    # )
+    # sync_ftp_password = schema.Password(
+    #     title=_(
+    #         "Password of user of FTP account from which sync files are retrieved",
+    #     ),
+    #     required=True,
+    #     readonly=False,
+    # )
+    # sync_email_user = schema.TextLine(
+    #     title=_(
+    #         "User of email account to which sync files are sent",
+    #     ),
+    #     required=True,
+    #     readonly=False,
+    #     visible=False,
+    # )
+    # sync_email_password = schema.Password(
+    #     title=_(
+    #         "Password of email account to which sync files are sent",
+    #     ),
+    #     required=True,
+    #     readonly=False,
+    #     visible=False,
+    # )
+    # sync_email_allowed_emails = schema.TextLine(
+    #     title=_(
+    #         "List of emails (comma separated) from which sync files can be sent",
+    #     ),
+    #     required=True,
+    #     readonly=False,
+    #     visible=False,
+    # )
+    # sync_email_allowed_subjects = schema.TextLine(
+    #     title=_(
+    #         "Regular Expression to match sync email subjects",
+    #     ),
+    #     required=True,
+    #     readonly=False,
+    #     visible=False,
+    # )
 
 
 class LocationSyncControlPanel(RegistryEditForm):
@@ -63,28 +96,29 @@ class LocationSyncControlPanel(RegistryEditForm):
     schema_prefix = "senaite.locationsync.location_sync_control_panel"
     label = _("Location Sync Settings")
 
-    @button.buttonAndHandler(_('Cancel'), name='cancel')
+    @button.buttonAndHandler(_("Cancel"), name="cancel")
     def handleCancel(self, action):
         super(LocationSyncControlPanel, self).handleCancel(self, action)
 
-    @button.buttonAndHandler(_('Save'), name=None)
+    @button.buttonAndHandler(_("Save"), name=None)
     def handleSave(self, action):
         super(LocationSyncControlPanel, self).handleSave(self, action)
 
-    @button.buttonAndHandler(_('Run Sync Now'), name='run_sync')
+    @button.buttonAndHandler(_("Run Sync Now"), name="run_sync")
     def handleRunSync(self, action):
         url = "{}/sync_locations_view".format(self.context.absolute_url())
         self.request.response.redirect(url)
 
-    @button.buttonAndHandler(_('Log Files View'), name='log_files_view')
+    @button.buttonAndHandler(_("Log Files View"), name="log_files_view")
     def handleLogFilesView(self, action):
         url = "{}/log_file_view".format(self.context.absolute_url())
         self.request.response.redirect(url)
 
-    @button.buttonAndHandler(_('Data Files View'), name='data_files_view')
-    def handleLogFilesView(self, action):
+    @button.buttonAndHandler(_("Data Files View"), name="data_files_view")
+    def handleDataFilesView(self, action):
         url = "{}/data_file_view".format(self.context.absolute_url())
         self.request.response.redirect(url)
+
 
 LocationSyncControlPanelView = layout.wrap_form(
     LocationSyncControlPanel, ControlPanelFormWrapper
