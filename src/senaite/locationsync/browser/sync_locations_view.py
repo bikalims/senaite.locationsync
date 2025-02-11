@@ -16,7 +16,7 @@ from plone.protect.interfaces import IDisableCSRFProtection
 from Products.Five.browser import BrowserView
 from Products.CMFPlone.utils import safe_unicode
 from Products.statusmessages.interfaces import IStatusMessage
-from senaite import api
+from bika.lims import api
 from senaite.core import logger
 from senaite.locationsync import _
 import subprocess
@@ -126,8 +126,12 @@ class SyncLocationsView(BrowserView):
             self.sync_base_folder is None
             or len(self.sync_base_folder) == 0
             or not os.path.exists(self.sync_base_folder)
+            or not os.path.exists("{}/logs".format(self.sync_base_folder))
+            or not os.path.exists("{}/archive".format(self.sync_base_folder))
+            or not os.path.exists("{}/current".format(self.sync_base_folder))
+            or not os.path.exists("{}/errors".format(self.sync_base_folder))
         ):
-            msg = "Sync Base Folder value on Control Panel is not set correctly"
+            msg = "Sync Base Folder value on Control Panel is not set correctly and/or folder structure"
             IStatusMessage(self.request).addStatusMessage(_(msg), "error")
             self.request.response.redirect(self.context.absolute_url())
             logger.info(msg)
@@ -140,7 +144,10 @@ class SyncLocationsView(BrowserView):
 
         # disable CSRF because
         alsoProvides(self.request, IDisableCSRFProtection)
+
+        # Do the sync
         self.sync_locations()
+
         errors = [log for log in self.logs if log["level"].lower() == "error"]
         warnings = [log for log in self.logs if log["level"].lower() == "warn"]
         actions = [log for log in self.logs if log["action"] != "Info"]
@@ -381,6 +388,13 @@ class SyncLocationsView(BrowserView):
         )
 
     def sync_locations(self):
+        user = api.get_current_user()
+        if user:
+            user_id = user.id
+        else:
+            user_id = "Dunno"
+        self.log("Sync initiated by {}".format(user_id))
+
         if not self._all_folder_exist():
             return
         self.log("Folder check was successful")
@@ -440,8 +454,8 @@ class SyncLocationsView(BrowserView):
         timestamp = DateTime.strftime(DateTime(), "%Y%m%d-%H%M-%S")
         # TODO for testing timestamp = "aaa"
         file_name = "SyncLog-{}.csv".format(timestamp)
-        logger.info("Write log file {}".format(file_name))
         file_path = "{}/{}".format(self.sync_logs_folder, file_name)
+        logger.info("Write log file {}".format(file_path))
 
         with open(file_path, "w") as f:
             writer = csv.writer(f)
