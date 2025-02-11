@@ -10,10 +10,17 @@
 
       <h2 i18n:translate="">History of Location Sync Data Files</h2>
       <div tal:define="data view/get_data">
-        <tal:loop tal:repeat="file data/files">
-          <p><a tal:attributes="href file/url" tal:content="file/name"/></p>
-        </tal:loop>
-        <button tal:condition="data/limit" class="btn-sm btn-outline-secondary"><a tal:attributes="href python:'{}/data_file_view?all=true'.format(here.absolute_url())" >Show All</a></button>
+        <div tal:condition="python: data and 'files' in data">
+          <tal:loop tal:repeat="file data/files">
+            <p><a tal:attributes="href file/url" tal:content="file/name"/></p>
+          </tal:loop>
+          <button tal:condition="data/limit" class="btn-sm btn-outline-secondary">
+            <a tal:attributes="href python:'{}/data_file_view?all=true'.format(here.absolute_url())" >Show All</a>
+          </button>
+        </div>
+        <div tal:condition="python: not data">
+          <p> No Files found</p>
+        </div>
       </div>
 
   </metal:block>

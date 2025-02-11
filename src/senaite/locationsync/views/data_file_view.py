@@ -5,7 +5,7 @@ import glob
 import logging
 import os
 from Products.Five.browser import BrowserView
-from senaite import api
+from bika.lims import api
 import StringIO
 from zope.interface import Interface
 
