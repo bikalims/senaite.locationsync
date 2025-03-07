@@ -387,6 +387,22 @@ class SyncLocationsView(BrowserView):
             }
         )
 
+    def create_pid(self, pid_file="/tmp/sync.pid"):
+        """Create a PID file in the specified path."""
+        with open(pid_file, "w") as f:
+            f.write(str(os.getpid()))
+
+    def remove_pid(self, pid_file="/tmp/sync.pid"):
+        """Remove the PID file if it exists."""
+        try:
+            os.remove(pid_file)
+        except FileNotFoundError:
+            pass  # File doesn't exist, no action needed
+
+    def pid_exists(self, pid_file="/tmp/sync.pid"):
+        """Check if the PID file exists."""
+        return os.path.exists(pid_file)
+
     def sync_locations(self):
         user = api.get_current_user()
         if user:
@@ -399,11 +415,19 @@ class SyncLocationsView(BrowserView):
             return
         self.log("Folder check was successful")
 
+        if self.pid_exists():
+            self.log("No PID file found", level="error")
+            return
+        self.log("No PID file found")
+        self.create_pid()
+
         self.log("Sync process started")
         self.process_file("Accounts", ACCOUNT_FILE_NAME, ACCOUNT_FILE_HEADERS)
         self.process_file("Locations", LOCATION_FILE_NAME, LOCATION_FILE_HEADERS)
         self.process_file("Systems", SYSTEM_FILE_NAME, SYSTEM_FILE_HEADERS)
         self.process_file("Contacts", CONTACT_FILE_NAME, CONTACT_FILE_HEADERS)
+
+        self.remove_pid()
         self.log("Sync process completed")
 
     def process_file(self, file_type, file_name, headers=[]):
