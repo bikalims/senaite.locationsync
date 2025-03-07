@@ -11,7 +11,7 @@
     for="*"
     class=".log_file_view.LogFileView"
     template="log_file_view.pt"
-    permission="zope2.View"
+    permission="cmf.ManagePortal"
     layer="senaite.locationsync.interfaces.ISenaiteLocationsyncLayer"
     />
 
@@ -20,7 +20,7 @@
     for="*"
     class=".log_file_view.LogFileView"
     attribute="get_log_file"
-    permission="zope2.View"
+    permission="cmf.ManagePortal"
     layer="senaite.locationsync.interfaces.ISenaiteLocationsyncLayer"
     />
 
@@ -29,7 +29,7 @@
     for="*"
     class=".data_file_view.DataFileView"
     template="data_file_view.pt"
-    permission="zope2.View"
+    permission="cmf.ManagePortal"
     layer="senaite.locationsync.interfaces.ISenaiteLocationsyncLayer"
     />
 
@@ -38,7 +38,7 @@
     for="*"
     class=".data_file_view.DataFileView"
     attribute="get_data_file"
-    permission="zope2.View"
+    permission="cmf.ManagePortal"
     layer="senaite.locationsync.interfaces.ISenaiteLocationsyncLayer"
     />
 
