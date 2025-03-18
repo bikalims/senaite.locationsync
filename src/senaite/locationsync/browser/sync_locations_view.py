@@ -157,20 +157,21 @@ class SyncLocationsView(BrowserView):
                 len(errors), len(warnings), len(actions), len(additions)
             )
         )
-        # Move data files
-        if len(errors) == 0:
-            self._move_file(ACCOUNT_FILE_NAME, self.sync_archive_folder)
-            self._move_file(LOCATION_FILE_NAME, self.sync_archive_folder)
-            self._move_file(SYSTEM_FILE_NAME, self.sync_archive_folder)
-            self._move_file(CONTACT_FILE_NAME, self.sync_archive_folder)
-        else:
-            self._move_file(ACCOUNT_FILE_NAME, self.sync_error_folder)
-            self._move_file(LOCATION_FILE_NAME, self.sync_error_folder)
-            self._move_file(SYSTEM_FILE_NAME, self.sync_error_folder)
-            self._move_file(CONTACT_FILE_NAME, self.sync_error_folder)
-            if not no_abort:
-                self.log("Abort all transactions because errors we found")
-                transaction.abort()
+        if not self.pid_exists():
+            # Move data files
+            if len(errors) == 0:
+                self._move_file(ACCOUNT_FILE_NAME, self.sync_archive_folder)
+                self._move_file(LOCATION_FILE_NAME, self.sync_archive_folder)
+                self._move_file(SYSTEM_FILE_NAME, self.sync_archive_folder)
+                self._move_file(CONTACT_FILE_NAME, self.sync_archive_folder)
+            else:
+                self._move_file(ACCOUNT_FILE_NAME, self.sync_error_folder)
+                self._move_file(LOCATION_FILE_NAME, self.sync_error_folder)
+                self._move_file(SYSTEM_FILE_NAME, self.sync_error_folder)
+                self._move_file(CONTACT_FILE_NAME, self.sync_error_folder)
+                if not no_abort:
+                    self.log("Abort all transactions because errors we found")
+                    transaction.abort()
 
         # Create log file
         log_file_name = self.write_log_file()
@@ -416,7 +417,10 @@ class SyncLocationsView(BrowserView):
         self.log("Folder check was successful")
 
         if self.pid_exists():
-            self.log("No PID file found", level="error")
+            self.log(
+                "Abort because another sync process is running (PID file found)",
+                level="error",
+            )
             return
         self.log("No PID file found")
         self.create_pid()
