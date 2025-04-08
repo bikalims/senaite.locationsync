@@ -1032,7 +1032,7 @@ class SyncLocationsView(BrowserView):
                     "SamplePoint",
                     title=row["system_name"],
                 )
-                system.SamplePointId = row["SystemID"]
+                system.sample_point_id = row["SystemID"]
                 reindex = True
                 client_title = location.aq_parent.Title()
                 self.log(
@@ -1042,15 +1042,15 @@ class SyncLocationsView(BrowserView):
                     context="Systems",
                     action="Created",
                 )
-            if system.EquipmentID != row["Equipment_ID"]:
-                system.EquipmentID = row["Equipment_ID"]
+            if system.equipment_id != row["Equipment_ID"]:
+                system.equipment_id = row["Equipment_ID"]
                 reindex = True
-            if system.EquipmentType != row["system"]:
+            if system.equipment_type != row["system"]:
                 reindex = True
-                system.EquipmentType = row["system"]
-            if system.EquipmentDescription != row["Equipment_Description2"]:
+                system.equipment_type = row["system"]
+            if system.equipment_description != row["Equipment_Description2"]:
                 reindex = True
-                system.EquipmentDescription = row["Equipment_Description2"]
+                system.equipment_description = row["Equipment_Description2"]
             if reindex:
                 system.reindexObject()
 
