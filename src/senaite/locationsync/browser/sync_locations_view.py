@@ -28,7 +28,6 @@ import transaction
 from zope.interface import Interface, alsoProvides
 
 EMAIL_SUPER = True
-COMMIT_COUNT = 100
 FORCE_ABORT = False
 SETUP_RUN = False
 
@@ -83,6 +82,7 @@ class SyncLocationsView(BrowserView):
         self.sync_error_folder = "{}/errors".format(self.sync_base_folder)
         self.sync_logs_folder = "{}/logs".format(self.sync_base_folder)
         self.sync_history_folder = "{}/all".format(self.sync_base_folder)
+        self.commit_count = 100
 
     def __call__(self):
         logger.info("location sync invoked")
@@ -104,10 +104,10 @@ class SyncLocationsView(BrowserView):
             logger.info("Parameter confirm = true")
         if self.request.form.get("commit", "false").lower() == "true":
             logger.info("Commit every 100 transactions")
-            COMMIT_COUNT = 100
+            self.commit_count = 100
         else:
             logger.info("Only commit at the end of the run")
-            COMMIT_COUNT = 0
+            self.commit_count = 0
         # if self.request.form.get("get_emails", "true").lower() == "true":
         #     err_code = self.get_emails()
         #     if err_code is not None:
@@ -459,7 +459,7 @@ class SyncLocationsView(BrowserView):
             self.process_systems_rules(data)
         elif file_type == "Contacts":
             self.process_contacts_rules(data)
-        if COMMIT_COUNT > 0:
+        if self.commit_count > 0:
             transaction.commit()
 
     def clean_row(self, row):
@@ -612,7 +612,7 @@ class SyncLocationsView(BrowserView):
         client_ids = [c["getClientID"] for c in clients]
         num_rows = len(data["rows"])
         for i, row in enumerate(data["rows"]):
-            if COMMIT_COUNT > 0 and i % COMMIT_COUNT == 0:
+            if self.commit_count > 0 and i % self.commit_count == 0:
                 transaction.commit()
             logger.info("Process row {} of {} from Accounts file".format(i, num_rows))
             if len(row.get("Customer_Number", "")) == 0:
@@ -684,6 +684,7 @@ class SyncLocationsView(BrowserView):
                     ClientID=row["Customer_Number"],
                     title=row["Account_name"],
                 )
+                client.reindexObject()
 
                 self.log(
                     "Created Client {}".format(row["Account_name"]),
@@ -720,7 +721,7 @@ class SyncLocationsView(BrowserView):
         client_ids = [c["getClientID"] for c in clients]
         num_rows = len(data["rows"])
         for i, row in enumerate(data["rows"]):
-            if COMMIT_COUNT > 0 and i % COMMIT_COUNT == 0:
+            if self.commit_count > 0 and i % self.commit_count == 0:
                 transaction.commit()
             logger.info("Process row {} of {} from Locations file".format(i, num_rows))
             if SETUP_RUN and (row["HOLD"] == "1" or row["Cancel_Box"] == "1"):
@@ -794,8 +795,8 @@ class SyncLocationsView(BrowserView):
                     # sample_point_location_id=row["Locations_id"],
                 )
                 location.setSamplePointLocationID(row["Locations_id"])
+                location.reindexObject()
                 client_path = "/".join(client_obj.getPhysicalPath())
-                # location_path = "/".join(location.getPhysicalPath())
                 self.log(
                     "Created location {} in Client {} at {}".format(
                         title, client.Title, client_path
@@ -885,6 +886,7 @@ class SyncLocationsView(BrowserView):
                             Surname=surname,
                             Firstname=firstname,
                         )
+                        contact.reindexObject()
                     except Exception:
                         self.log(
                             "Failed creating Lab Contact {} for location {} and client {}".format(
@@ -919,6 +921,7 @@ class SyncLocationsView(BrowserView):
                     if location is None:
                         location = api.get_object(location_brain)
                     location.setAccountManagers(contacts)
+                    location.reindexObject()
                     self.log(
                         "Added Lab Contact {} to location {} and client {}".format(
                             contact.Title(), location_brain.Title, client.Title
@@ -934,6 +937,7 @@ class SyncLocationsView(BrowserView):
                     old_address = location.getAddress()
                     if [address] != old_address:
                         location.setAddress([address])
+                        location.reindexObject()
                         self.log(
                             "Changed Address to location {} and client {} from {} to {}".format(
                                 location_brain.Title, client.Title, old_address, address
@@ -951,7 +955,7 @@ class SyncLocationsView(BrowserView):
         location_ids = [loc.getSamplePointLocationID for loc in locations]
         num_rows = len(data["rows"])
         for i, row in enumerate(data["rows"]):
-            if COMMIT_COUNT > 0 and i % COMMIT_COUNT == 0:
+            if self.commit_count > 0 and i % self.commit_count == 0:
                 transaction.commit()
             logger.info("Process row {} of {} from Systems file".format(i, num_rows))
             if SETUP_RUN and row["Inactive_Retired_Flag"] == "1":
@@ -1064,7 +1068,7 @@ class SyncLocationsView(BrowserView):
         location_ids = [loc.getSamplePointLocationID() for loc in locations]
         num_rows = len(data["rows"])
         for i, row in enumerate(data["rows"]):
-            if COMMIT_COUNT > 0 and i % COMMIT_COUNT == 0:
+            if self.commit_count > 0 and i % self.commit_count == 0:
                 transaction.commit()
             logger.info("Process row {} of {} from Contacts file".format(i, num_rows))
             if len(row.get("contactID", "")) == 0:
@@ -1140,6 +1144,7 @@ class SyncLocationsView(BrowserView):
             contact.Surname = surname
             contact.ContactId = row["contactID"]
             contact.setEmailAddress(row["email"])
+            contact.reindexObject()
             self.log(
                 "Created contact with email {} for location {} in client {}".format(
                     contact.getEmailAddress(), location.Title(), client.Title()
@@ -1147,7 +1152,6 @@ class SyncLocationsView(BrowserView):
                 context="Contacts",
                 action="Created",
             )
-            transaction.commit()
         return True
 
     def _get_address_field(self, row, row_num):
